@@ -1,5 +1,13 @@
 * History of changes for the Motsognir gopher server *
 
+v1.0.5 [05 Oct 2014]
+ - Sanitizing the environment before calling a CGI/PHP child (contributed by Matt Lewandowsky),
+ - Fixed the $HOME, $USER and $USERNAME environment variable when dropping root privileges (contributed by Matt Lewandowsky),
+ - Added support for setting a custom http error file (HttpErrFile),
+ - When logging IP addresses, IPv4 addresses are logged as 'normal' (short) addresses instead of IPV6MAPPED addresses,
+ - The 'GopherHostname' setting is not mandatory anymore. If missing, local server's IP will be used automatically,
+ - Support for custom IP binding (allows to use multiple gopher instances on a single server).
+
 v1.0.4 [15 Mar 2014]
  - Server-side params are passed to dynamic gophermaps (CGI, PHP) now,
  - Dynamic gophermaps (CGI, PHP) can be used as a global (server-wide) gophermap.

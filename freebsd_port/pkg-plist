@@ -1,6 +1,2 @@
-usr/sbin/motsognir
+bin/motsognir
 etc/motsognir.conf
-usr/share/doc/motsognir/changes.txt
-usr/share/doc/motsognir/manual.pdf
-usr/share/man/man8/motsognir.8.gz
-@dirrm usr/share/doc/motsognir

@@ -45,9 +45,9 @@
 #include "binary.h"
 
 /* Constants */
-#define pVer "1.0.4"
+#define pVer "1.0.5"
 #define pDate "2008-2014"
-#define HOMEPAGE "http://sourceforge.net/projects/motsognir/"
+#define HOMEPAGE "http://motsognir.sourceforge.net"
 
 
 struct MotsognirConfig {
@@ -65,22 +65,74 @@ struct MotsognirConfig {
   char *runasuser;
   uid_t runasuser_uid;
   gid_t runasuser_gid;
+  char *runasuser_home;
   char *chroot;
+  char *httperrfile;
+  char *bind;
 };
 
 
-/* drop root privileges - returns 0 on success, non-zero on failure */
-static int droproot(const char *username, uid_t uid, gid_t gid) {
+/* Unset any extraneous environment variables which CGI/PHP is unlikely to need. */
+static void sanitizeenv(void) {
+  unsetenv("COLUMNS");
+  unsetenv("DISPLAY");
+  unsetenv("INPUTRC");
+  unsetenv("LINES");
+  unsetenv("SHLVL");
+  unsetenv("TERM");
+}
+
+#include <stdio.h>
+#include <stdlib.h>
+
+
+/* Reads a file from disk, loads it into an array, and returns a FILE ptr */
+static char *readfiletomem(char *file) {
+  char *source = NULL;
+  FILE *fp = fopen(file, "rb");
+  if (fp != NULL) {
+    /* go to the end of the file */
+    if (fseek(fp, 0L, SEEK_END) == 0) {
+      /* get the size of the file */
+      long bufsize = ftell(fp);
+      if (bufsize == -1) { /* Error */ }
+      /* allocate our buffer to that size */
+      source = malloc(sizeof(char) * (bufsize + 1));
+      if (source != NULL) {
+        size_t newLen;
+        /* go back to the start of the file */
+        fseek(fp, 0L, SEEK_SET);
+        /* read the entire file into memory */
+        newLen = fread(source, sizeof(char), bufsize, fp);
+        source[++newLen] = '\0'; /* string terminator, just to be safe */
+      }
+    }
+    fclose(fp);
+  }
+  return(source);
+}
+
+
+/* Drop root privileges - returns 0 on success, non-zero on failure */
+static int droproot(struct MotsognirConfig *config) {
   /* drop privileges */
-  if (initgroups(username, gid) != 0 || setgid(gid) != 0 || setuid(uid) != 0) {
-    syslog(LOG_WARNING, "Error: Couldn't change to '%.32s' uid=%lu gid=%lu: %s", username, (unsigned long)uid, (unsigned long)gid, strerror(errno));
+  if (initgroups(config->runasuser, config->runasuser_gid) != 0 || setgid(config->runasuser_gid) != 0 || setuid(config->runasuser_uid) != 0) {
+    syslog(LOG_WARNING, "Error: Couldn't change to '%.32s' uid=%lu gid=%lu: %s", config->runasuser, (unsigned long)config->runasuser_uid, (unsigned long)config->runasuser_gid, strerror(errno));
     return(-1);
   }
   /* it's all good, but let's double check (you never know) */
-  if (getuid() != uid) {
-    syslog(LOG_WARNING, "Error: For some mysterious reasons Motsognir was unable to switch to user '%s'.", username);
+  if (getuid() != config->runasuser_uid) {
+    syslog(LOG_WARNING, "Error: For some mysterious reasons Motsognir was unable to switch to user '%s'.", config->runasuser);
     return(-1);
   }
+  /* Clean up the remnants of running as root */
+  setenv("USER", config->runasuser, 1);
+  setenv("USERNAME", config->runasuser, 1);
+  unsetenv("SUDO_USER");
+  unsetenv("SUDO_UID");
+  unsetenv("SUDO_GID");
+  unsetenv("SUDO_COMMAND");
+  if (config->runasuser_home != NULL) setenv("HOME", config->runasuser_home, 1);
   return(0);
 }
 
@@ -102,6 +154,7 @@ static char *skip_whitespace(char *s) {
 }
 
 
+/* Trims any whitespaces before and after a string. */
 static void trimstr(char *s) {
   size_t len = strlen(s);
   /* trim trailing whitespace */
@@ -118,7 +171,7 @@ static void trimstr(char *s) {
 }
 
 
-/* encode a string to percent encoding */
+/* Encode a string to percent encoding */
 static void percencode(char *src, char *dst, int dstmaxlen) {
   int x, encodingrequired, dstlen = 0;
   const char *hexchar = "0123456789ABCDEF";
@@ -150,7 +203,8 @@ static void percencode(char *src, char *dst, int dstmaxlen) {
 }
 
 
-/* decodes a single hex character (0..F) and returns its value. Returns -1 if the character is invalid. */
+/* Decodes a single hex character (0..F) and returns its value. Returns -1 if
+ * the character is invalid. */
 static int hex2int(char ch) {
   switch (ch) {
     case '0':
@@ -299,29 +353,40 @@ static void about(char *version, char *datestring, char *homepage) {
 
 
 static void sendbackhttperror(int sock, struct MotsognirConfig *config) {
-  char txtline[1024];
+  char txtline[1024], portstr[16];
   syslog(LOG_INFO, "HTTP request detected - a HTTP error message is returned.");
   sendline(sock, "HTTP/1.1 400 Bad request");
   sendline(sock, "Content-Type: text/html; charset=UTF-8");
   sendline(sock, "Server: Motsognir");
   sendline(sock, "Connection: close");
   sendline(sock, "");
-  sendline(sock, "<!DOCTYPE html>");
-  sendline(sock, "<html>");
-  sendline(sock, "  <head>");
-  sendline(sock, "    <title>400 - Bad request</title>");
-  sendline(sock, "  </head>");
-  sendline(sock, "  <body>");
-  sendline(sock, "    <p style=""font-size: 1.3em; margin: 1em 1em 1em 1em; text-align: left; font-weight: bold;"">400 - BAD REQUEST</p>");
-  sendline(sock, "    <p style=""font-size: 1.1em; margin: 1em 1em 1em 1em; text-align: left;"">Your request is not admissible. Sorry. This is a gopher server, which means that you have to use the gopher protocol to access it. Right now, you used the HTTP protocol instead.</p>");
-  if (config->gopherport == 70) {
-      sprintf(txtline, "    <p style=\"text-align: center;\"><a href=\"gopher://%s/\" style=\"font-size: 1.15em;\">Click here to access this server using the gopher protocol.</a></p>", config->gopherhostname);
+  if (config->httperrfile != NULL) {
+      sendline(sock, config->httperrfile);
     } else {
-      sprintf(txtline, "    <a href=\"gopher://%s:%d/\">Click here to access the server using the gopher protocol.</a>", config->gopherhostname, config->gopherport);
+      sendline(sock, "<!DOCTYPE html>");
+      sendline(sock, "<html>");
+      sendline(sock, "  <head>");
+      sendline(sock, "    <title>Error 400 - Bad request</title>");
+      sendline(sock, "    <style>");
+      sendline(sock, "      body { font-family: sans-serif; font-size: 1.1em; margin: 1em; }");
+      sendline(sock, "      h1 { color: red; text-align: center; }");
+      sendline(sock, "    </style>");
+      sendline(sock, "  </head>");
+      sendline(sock, "  <body>");
+      sendline(sock, "    <h1>Error 400 - BAD REQUEST</h1>");
+      sendline(sock, "    <p>Your request is not admissible. Sorry. This is a gopher server, which means that you have to use the gopher protocol to access it. Right now, you used the HTTP protocol instead.</p>");
+      sendline(sock, "    <p style='text-align: center'>");
+      if (config->gopherport == 70) {
+          portstr[0] = 0;
+        } else {
+          sprintf(portstr, ":%d", config->gopherport);
+      }
+      sprintf(txtline, "      <a href='gopher://%s%s/' style='font-size: 1.15em;'>Click here to access this server using the gopher protocol.</a>", config->gopherhostname, portstr);
+      sendline(sock, txtline);
+      sendline(sock, "    </p>");
+      sendline(sock, "  </body>");
+      sendline(sock, "</html>");
   }
-  sendline(sock, txtline);
-  sendline(sock, "  </body>");
-  sendline(sock, "</html>");
 }
 
 
@@ -362,7 +427,10 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
   config->runasuser = NULL;
   config->runasuser_uid = 0;
   config->runasuser_gid = 0;
+  config->runasuser_home = NULL;
   config->chroot = NULL;
+  config->httperrfile = NULL;
+  config->bind = NULL;
 
   fd = fopen(configfile, "r");
   if (fd == NULL) {
@@ -398,6 +466,8 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
             /* printf("Got conf: '%s' -> '%s'\n", tokenbuff, valuebuff); */
             if (strcasecmp(tokenbuff, "verbose") == 0) {
                 config->verbosemode = atoi(valuebuff);
+              } else if (strcasecmp(tokenbuff, "bind") == 0) {
+                config->bind = strdup(valuebuff);
               } else if (strcasecmp(tokenbuff, "capssupport") == 0) {
                 config->capssupport = atoi(valuebuff);
               } else if (strcasecmp(tokenbuff, "CapsServerArchitecture") == 0) {
@@ -422,6 +492,9 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
                 config->phpsupport = atoi(valuebuff);
               } else if (strcasecmp(tokenbuff, "chroot") == 0) {
                 config->chroot = strdup(valuebuff);
+              } else if (strcasecmp(tokenbuff, "httperrfile") == 0) {
+                config->httperrfile = readfiletomem(valuebuff);
+                if (config->httperrfile == NULL) syslog(LOG_WARNING, "Failed to load custom http error file '%s'. Default content will be used instead.", valuebuff);
             }
             valuebuffpos = 0;
           } else if (bytebuff != '\r') {
@@ -439,23 +512,22 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
   /* Perform some validation of the configuration content... */
 
   if (config->verbosemode < 0) {
-    syslog(LOG_WARNING, "Invalid verbose level found in the configuration file (%d).", config->verbosemode);
+    syslog(LOG_ERR, "Invalid verbose level found in the configuration file (%d).", config->verbosemode);
     return(-1);
   }
 
   if (config->gopherport < 1) {
-    syslog(LOG_WARNING, "Invalid gopher port found in the configuration file (%d)", config->gopherport);
+    syslog(LOG_ERR, "Invalid gopher port found in the configuration file (%d)", config->gopherport);
     return(-1);
   }
 
   if (config->gopherroot[0] == 0) {
-    syslog(LOG_WARNING, "Missing gopher root path in the configuration file. Please add a valid 'GopherRoot=' directive");
+    syslog(LOG_ERR, "Missing gopher root path in the configuration file. Please add a valid 'GopherRoot=' directive");
     return(-1);
   }
 
   if (config->gopherhostname == NULL) {
-    syslog(LOG_WARNING, "Missing gopher hostname in the configuration file. Please add a valid 'GopherHostname=' directive.");
-    return(-1);
+    syslog(LOG_WARNING, "Missing gopher hostname in the configuration file. The local IP address will be used instead. Please add a valid 'GopherHostname=' directive.");
   }
 
   /* if a 'RunAsUser' directive is present, resolve the username to a proper uid/gid (because later we might be unable to do it from within a chroot jail) */
@@ -469,6 +541,7 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
     config->runasuser = strdup(pw->pw_name); /* ...and replace it with the resolved username */
     config->runasuser_uid = pw->pw_uid;
     config->runasuser_gid = pw->pw_gid;
+    config->runasuser_home = strdup(pw->pw_dir);
   }
 
   return(0);
@@ -497,7 +570,8 @@ static char *explode_serverside_params_from_query(char *directorytolist) {
 }
 
 
-/* returns a pointer to the extension part of a filename (or to an empty string if the filename has no extension) */
+/* Returns a pointer to the extension part of a filename (or to an empty
+ * string if the filename has no extension) */
 static char *getfileextension(char *filename) {
   char *ext = NULL;
   int x;
@@ -512,7 +586,7 @@ static char *getfileextension(char *filename) {
 }
 
 
-/* map the gopher type of a file, based on its extension */
+/* Map the gopher type of a file, based on its extension */
 static char DetectGopherType(char *filename) {
   char *ext = getfileextension(filename);
   if (strcasecmp(ext, ".txt") == 0) {
@@ -552,7 +626,8 @@ static char DetectGopherType(char *filename) {
 }
 
 
-/* reads a single line from a file descriptor. returns the length of the line (can be zero). Returns -1 on error or EOF). */
+/* Reads a single line from a file descriptor. Returns the length of the line
+ * (can be zero). Returns -1 on error or EOF). */
 static int sockreadline(int sock, char *buf, int n, time_t *timeoutStartTime) {
   int numRead, totRead = 0, gotatleastonebyte = 0;
   char ch;
@@ -820,8 +895,9 @@ static void computerelativepath(char *result, int result_maxlen, char *curdir, c
 
 
 
-/* tests whether 'string' starts with 'start' */
-static int stringstartwith(char *string, char *start) {
+/* tests whether 'string' starts with 'start'. Returns 0 if not, non-zero
+ * otherwise. */
+static int stringstartswith(char *string, char *start) {
   while (*start != 0) {
     if (*string != *start) return(0);
     start += 1;
@@ -831,7 +907,8 @@ static int stringstartwith(char *string, char *start) {
 }
 
 
-/* tests whether 'string' ends with 'end' */
+/* tests whether 'string' ends with 'end'. Returns 0 if not, non-zero
+ * otherwise. */
 static int stringendswith(char *string, char *end) {
   int endlen = strlen(end);
   int stringlen = strlen(string);
@@ -863,7 +940,7 @@ static void execCgi(int sock, char *localfile, char *srvsideparams, struct Motso
     } else {
       syslog(LOG_INFO, "running server-side app '%s'", localfile);
   }
-  /* Set environnement variables */
+  /* Set environment variables */
   setenv("SERVER_NAME", config->gopherhostname, 1);       /* The server's hostname, DNS alias, or IP address as it would appear in self-referencing URLs. */
   sprintf(tmpstring, "%d", config->gopherport);
   setenv("SERVER_PORT", tmpstring, 1);                    /* The server's port, as it would appear in self-referencing URLs. */
@@ -943,7 +1020,7 @@ static void outputgophermap(int sock, struct MotsognirConfig *config, char *loca
     if (itemserver[0] == 0) snprintf(itemserver, sizeof(itemserver), "%s", config->gopherhostname);
     if (itemport == 0) itemport = 70;
     /* if we are dealing with relative path on the local server, resolve it first */
-    if ((itemtype != 'i') && (itemselector[0] != '/') && (itemselector[0] != 0) && (strcasecmp(itemserver, config->gopherhostname) == 0) && (stringstartwith(itemselector, "URL:") == 0)) {
+    if ((itemtype != 'i') && (itemselector[0] != '/') && (itemselector[0] != 0) && (strcasecmp(itemserver, config->gopherhostname) == 0) && (stringstartswith(itemselector, "URL:") == 0)) {
       computerelativepath(linebuff, sizeof(linebuff), directorytolist, itemselector);
       snprintf(itemselector, sizeof(itemselector), "%s", linebuff);
     }
@@ -1002,7 +1079,27 @@ static void outputdir(int sock, struct MotsognirConfig *config, char *localfile,
 }
 
 
-static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrstr_maxlen, struct MotsognirConfig *config) {
+/* Shifts a string by n bytes left. */
+static void lshiftstring(char *str, int n) {
+  int x;
+  /* check that n is lower than string's length */
+  for (x = 0; str[x] != 0; x++);
+  if (x <= n) {
+    str[0] = 0;
+    return;
+  }
+  /* perform the shift */
+  for (x = 0; ; x++) {
+    if (str[x] == 0) break;
+    str[x] = str[x + n];
+    if (str[x] == 0) break;
+  }
+}
+
+/* Waits for a connection, forks when a client connection arrives, and
+ * returns the forked socket. Fills clientipaddrstr and serveripaddrstr with
+ * IP addresses (src and dst) */
+static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrstr_maxlen, char *serveripaddrstr, int serveripaddrstr_maxlen, struct MotsognirConfig *config) {
   int sockmaster, sockslave;
   int one = 1;  /* this is used by setsockopt() calls on the socket later */
   socklen_t clilen;
@@ -1017,15 +1114,22 @@ static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrst
   }
 
   /* I set the socket to be reusable, to avoid having to wait for a longish time when the server is restarted */
-  if (setsockopt(sockmaster, SOL_SOCKET, SO_REUSEADDR, (char *)&one, sizeof(one)) < 0) syslog(LOG_WARNING, "Warning: failed to set REUSEADDR on main socket");;
+  if (setsockopt(sockmaster, SOL_SOCKET, SO_REUSEADDR, (char *)&one, sizeof(one)) < 0) syslog(LOG_WARNING, "Warning: failed to set REUSEADDR on main socket");
 
   /* Initialize socket structure */
-  bzero((char *) &serv_addr, sizeof(serv_addr));
+  memset(&serv_addr, 0, sizeof(serv_addr));
   serv_addr.sin6_family = AF_INET6;
-  serv_addr.sin6_addr = in6addr_any;
+  if (config->bind == NULL) {   /* bind all */
+      serv_addr.sin6_addr = in6addr_any;
+    } else {    /* bind on a user-specfied address only */
+      if (inet_pton(AF_INET6, config->bind, &(serv_addr.sin6_addr)) != 1) {
+        syslog(LOG_WARNING, "FATAL ERROR: failed to parse the IP address bind value. Please check your 'bind' configuration.");
+        return(-2);
+      }
+  }
   serv_addr.sin6_port = htons(gopherport);
 
-  /* Explicitely mark the socket as NOT being IPV6-only. This is needed on systems that have a system-wide sysctl net.inet6.ip6.v6only=1 (by default every *nix besides Linux...)*/
+  /* Explicitely mark the socket as NOT being IPV6-only. This is needed on systems that have a system-wide sysctl net.inet6.ip6.v6only=1 (by default every *nix besides Linux...) */
   #ifdef IPV6_BINDV6ONLY  /* check if the BINDV6ONLY option exists at all */
     {
       int zero = 0;
@@ -1033,14 +1137,14 @@ static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrst
     }
   #endif
 
-  /* Now bind the host address using bind() call.*/
+  /* Now bind the host address using a bind() call */
   if (bind(sockmaster, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
      syslog(LOG_WARNING, "FATAL ERROR: binding failed (%s)", strerror(errno));
      return(-2);
   }
 
   /* Start listening for clients */
-  listen(sockmaster, 5);
+  listen(sockmaster, 10);
   clilen = sizeof(cli_addr);
 
   /* Ignore SIGCHLD - this way I don't have to worry about my children becoming little zombies */
@@ -1067,7 +1171,7 @@ static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrst
   /* Set the user file creation mask to zero. */
   umask(0);
 
-  /* Redirect standard file descriptors to /dev/null */
+  /* Redirect standard file descriptors to /dev/null - no reason for a daemon to write to stdout, stderr or stdin */
   freopen( "/dev/null", "r", stdin);
   freopen( "/dev/null", "w", stdout);
   freopen( "/dev/null", "w", stderr);
@@ -1087,12 +1191,15 @@ static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrst
   /* set the working directory to the root directory */
   if (chdir ("/") == -1) syslog(LOG_WARNING, "Warning: failed to switch to / directory (%s)", strerror(errno));
 
+  /* sanitize the environment (remove a few useless env variables) */
+  sanitizeenv();
+
   /* drop root privileges, if configuration says so */
   if (config->runasuser != NULL) {
     if (getuid() != 0) {
         syslog(LOG_WARNING, "A 'RunAsUser' directive has been configured, but the process has not been launched under root account. The 'RunAsUser' directive is therefore ignored.");
       } else { /* if I'm root, drop off privileges */
-        if (droproot(config->runasuser, config->runasuser_uid, config->runasuser_gid) != 0) {
+        if (droproot(config) != 0) {
             return(-2);
           } else {
             syslog(LOG_WARNING, "Successfully dropped root privileges. Motsognir runs as user '%s' now.", config->runasuser);
@@ -1118,9 +1225,21 @@ static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrst
           syslog(LOG_WARNING, "Failed to fetch client's IP address: %s", strerror(errno));
           sprintf(clientipaddrstr, "UNKNOWN");
         }
+        /* now fetch the local address (useful esp. for multihomed systems) */
+        clilen = sizeof(serv_addr);
+        if ((getsockname(sockslave, (struct sockaddr *) &serv_addr, &clilen) < 0) || (inet_ntop(serv_addr.sin6_family, &serv_addr.sin6_addr, serveripaddrstr, serveripaddrstr_maxlen) == NULL)) {
+          syslog(LOG_WARNING, "Failed to fetch server's IP address: %s", strerror(errno));
+          sprintf(serveripaddrstr, "UNKNOWN");
+        }
+        /* convert IPv4 "IPV6MAPPED" addresses to "normal" IPv4 strings, if needed */
+        if (stringstartswith(clientipaddrstr, "::ffff:") != 0) lshiftstring(clientipaddrstr, 7);
+        if (stringstartswith(serveripaddrstr, "::ffff:") != 0) lshiftstring(serveripaddrstr, 7);
+        /* set logprefix to contain the client's address */
         sprintf(logprefix, "motsognir [%s]", clientipaddrstr);
         openlog(logprefix, LOG_PID, LOG_DAEMON); /* set up the logging to log with PID and peer's IP address */
-        syslog(LOG_INFO, "new connection");
+        syslog(LOG_INFO, "new connection to %s", serveripaddrstr);
+        /* if no gopher hostname was set, use the server's address */
+        if (config->gopherhostname == NULL) config->gopherhostname = strdup(serveripaddrstr);
         /* Restore the default SIGCHLD handler - we need this because we might call CGI scripts via popen() later, and need to know their exit status */
         signal(SIGCHLD, SIG_DFL);
         return(sockslave);
@@ -1202,7 +1321,7 @@ static int checkforevasion(char *gopherroot, char *localfile) {
   char resolvedpath[PATH_MAX];
   if (realpath(localfile, resolvedpath) == NULL) return(0);
   strcat(resolvedpath, "/"); /* add a trailing / char to avoid false positives on the root resource */
-  if (stringstartwith(resolvedpath, gopherroot) == 0) {
+  if (stringstartswith(resolvedpath, gopherroot) == 0) {
     syslog(LOG_WARNING, "Evasion check: path '%s' (%s) do not seem to belong to '%s'", localfile, resolvedpath, gopherroot);
     return(1);
   }
@@ -1234,7 +1353,7 @@ static char *gophersecuritycheck(char *GophRequest) {
           continue;
         }
     }
-    /* if I'm here, it means that the UTF8 sequence was unrecognized */
+    /* if I'm here, it means that the UTF-8 sequence was unrecognized */
     return("Detected an invalid UTF-8 sequence.");
   }
   /* Alles klar, proceed! */
@@ -1262,6 +1381,7 @@ int main(int argc, char **argv) {
   char directorytolist[4096];
   char localfile[4096];
   char remoteclientaddr[64];
+  char localserveraddr[64];
   char *srvsideparams;
   char gophertype;
   char *configfile = "/etc/motsognir.conf";
@@ -1287,7 +1407,7 @@ int main(int argc, char **argv) {
     return(9);
   }
 
-  sock = waitforconn(config.gopherport, remoteclientaddr, sizeof(remoteclientaddr), &config);
+  sock = waitforconn(config.gopherport, remoteclientaddr, sizeof(remoteclientaddr), localserveraddr, sizeof(localserveraddr), &config);
   if (sock == -1) return(0);
   if (sock < 0) {
     puts("a fatal error occured. check the logs for details.");
@@ -1310,7 +1430,7 @@ int main(int argc, char **argv) {
   if (requestlookslikehttp(directorytolist) != 0) {
     char discarddatabuff[4096];
     sendbackhttperror(sock, &config);
-    recv(sock, discarddatabuff, 4096, MSG_DONTWAIT); /* read whatever request the peer sent us, to drain the socket before closing it (otherwise the tcp stack would trigger a nasty RST) */
+    recv(sock, discarddatabuff, 4096, MSG_DONTWAIT); /* read whatever request the peer sent us, to drain the socket before closing it (otherwise the tcp stack would trigger a ugly RST) */
     close(sock);
     return(0);
   }
@@ -1322,7 +1442,7 @@ int main(int argc, char **argv) {
     return(0);
   }
 
-  /* a request must start with a / (if not, prepend it with one) */
+  /* a request should start with a / (if not, prepend it with one) */
   if (directorytolist[0] != '/') {
     memmove(directorytolist+1, directorytolist, strlen(directorytolist)+1); /* first move the whole thing by one position to the right */
     directorytolist[0] = '/';
@@ -1337,7 +1457,7 @@ int main(int argc, char **argv) {
     return(0);
   }
 
-  /* Once we decoded the request, check that it doesn't contains any nasty stuff */
+  /* Once we decoded the request, check that it doesn't contain any nasty stuff */
   securitycheckresult = gophersecuritycheck(directorytolist);
   if (securitycheckresult != NULL) {
     syslog(LOG_INFO, "The gopher security module has detected a suspect condition. The query won't be processed. Reason: %s", securitycheckresult);
@@ -1377,7 +1497,7 @@ int main(int argc, char **argv) {
     return(0);
   }
 
-  /* the query is requesting a file - does it exists at all? */
+  /* the query is requesting a file - does it exist at all? */
   if (fexist(localfile) == 0) {
     syslog(LOG_INFO, "FileExists check: the file doesn't exists");
     sendline(sock, "3The selected resource doesn't exist!\tfake\tfake\t0");
@@ -1394,7 +1514,7 @@ int main(int argc, char **argv) {
     return(0);
   }
 
-  /* if the query is pointing to a PHP file, and PHP support is enabled - exectute the query */
+  /* if the query is pointing to a PHP file, and PHP support is enabled - execute the query */
   if ((strcmp(getfileextension(localfile), ".php") == 0) && (config.phpsupport != 0)) {
     execCgi(sock, localfile, srvsideparams, &config, pVer, directorytolist, remoteclientaddr, "php");
     close(sock);

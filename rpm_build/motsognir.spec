@@ -1,14 +1,14 @@
 #
 # spec file for package motsognir
 #
-# Copyright (c) 2013 Mateusz Viste
+# Copyright (c) 2013, 2014 Mateusz Viste
 #
 
 Name: motsognir
-Version: 1.0.3
+Version: 1.0.5
 Release: 1%{?dist}
 Summary: A robust, reliable and easy to install gopher server
-Url: http://sourceforge.net/projects/motsognir/
+Url: http://motsognir.sourceforge.net/
 Group: Productivity/Networking/Other
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 License: GPL-3.0+
