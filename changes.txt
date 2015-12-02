@@ -1,5 +1,9 @@
 * History of changes for the Motsognir gopher server *
 
+v1.0.4 [15 Mar 2014]
+ - Server-side params are passed to dynamic gophermaps (CGI, PHP) now,
+ - Dynamic gophermaps (CGI, PHP) can be used as a global (server-wide) gophermap.
+
 v1.0.3 [06 Oct 2013]
  - Fixed HTTP answers to be sent without resetting the connection afterwards,
  - Added an optimization that sends \r\n trailers within the same packet than the content line,

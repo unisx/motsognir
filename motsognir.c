@@ -1,8 +1,8 @@
 /*
-    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
-    *  Motsognir - The mighty gopher server                             *
-    *  Copyright (C) Mateusz Viste 2008, 2009, 2010, 2011, 2012, 2013   *
-    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+    *  Motsognir - The mighty gopher server                                   *
+    *  Copyright (C) Mateusz Viste 2008, 2009, 2010, 2011, 2012, 2013, 2014   *
+    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
    ----------------------------------------------------------------------
     This program is free software: you can redistribute it and/or modify
@@ -45,8 +45,8 @@
 #include "binary.h"
 
 /* Constants */
-#define pVer "1.0.3"
-#define pDate "2008-2013"
+#define pVer "1.0.4"
+#define pDate "2008-2014"
 #define HOMEPAGE "http://sourceforge.net/projects/motsognir/"
 
 
@@ -831,47 +831,15 @@ static int stringstartwith(char *string, char *start) {
 }
 
 
-static void outputgophermap(int sock, struct MotsognirConfig *config, char *localfile, char *gophermapfile, char *directorytolist) {
-  FILE *gophermapfd;
-  char linebuff[4096];
-  char itemtype;
-  char itemdesc[1024];
-  char itemselector[1024];
-  char itemserver[64];
-  long itemport;
-  gophermapfd = fopen(gophermapfile, "rb");
-  if (gophermapfd == NULL) {
-    syslog(LOG_WARNING, "ERROR: Failed to open the gophermap at '%s' (%s)", gophermapfile, strerror(errno));
-    return;
-  }
-  syslog(LOG_INFO, "Response=\"Return gophermap. (%s)", gophermapfile);
-
-  for (;;) {
-    if (sockreadline(fileno(gophermapfd), linebuff, 1023, NULL) < 0) break;
-    /* if it's an instruction to list files, do it, and move to next line */
-    if (strcasecmp(linebuff, "%FILES%") == 0) {
-      outputdircontent(sock, config, localfile, directorytolist);
-      continue;
-    }
-    /* explode the gophermap line into separate items */
-    if (explodegophermapline(linebuff, &itemtype, itemdesc, itemselector, itemserver, &itemport) != 0) {
-      sendline(sock, "3Parsing error\tfake\tfake\t0");
-      continue;
-    }
-    /* check values, and put default ones if some are missing */
-    if (itemserver[0] == 0) snprintf(itemserver, sizeof(itemserver), "%s", config->gopherhostname);
-    if (itemport == 0) itemport = 70;
-    /* if we are dealing with relative path on the local server, resolve it first */
-    if ((itemtype != 'i') && (itemselector[0] != '/') && (itemselector[0] != 0) && (strcasecmp(itemserver, config->gopherhostname) == 0) && (stringstartwith(itemselector, "URL:") == 0)) {
-      computerelativepath(linebuff, sizeof(linebuff), directorytolist, itemselector);
-      snprintf(itemselector, sizeof(itemselector), "%s", linebuff);
-    }
-    /* prepare the final line */
-    snprintf(linebuff, sizeof(linebuff), "%c%s\t%s\t%s\t%ld", itemtype, itemdesc, itemselector, itemserver, itemport);
-    /* send the final line */
-    sendline(sock, linebuff);
-  }
-  fclose(gophermapfd);
+/* tests whether 'string' ends with 'end' */
+static int stringendswith(char *string, char *end) {
+  int endlen = strlen(end);
+  int stringlen = strlen(string);
+  if (stringlen < endlen) return(0);
+  if (endlen == 0) return(1);
+  string += (stringlen - endlen);
+  if (strcmp(string, end) == 0) return(1);
+  return(0);
 }
 
 
@@ -934,7 +902,61 @@ static void execCgi(int sock, char *localfile, char *srvsideparams, struct Motso
 }
 
 
-static void outputdir(int sock, struct MotsognirConfig *config, char *localfile, char *directorytolist, char *remoteclientaddr) {
+static void outputgophermap(int sock, struct MotsognirConfig *config, char *localfile, char *gophermapfile, char *directorytolist, char *remoteclientaddr, char *srvsideparams) {
+  FILE *gophermapfd;
+  char linebuff[4096];
+  char itemtype;
+  char itemdesc[1024];
+  char itemselector[1024];
+  char itemserver[64];
+  long itemport;
+
+  /* first check if the gophermap is of dynamic type (cgi or php), and if so, execute it */
+  if ((config->cgisupport != 0) && (stringendswith(gophermapfile, ".cgi") != 0)) { /* is it a CGI file? */
+    execCgi(sock, gophermapfile, srvsideparams, config, pVer, directorytolist, remoteclientaddr, NULL);
+    return;
+  } else if ((config->phpsupport != 0) && (stringendswith(gophermapfile, ".php") != 0)) { /* is it a PHP file? */
+    execCgi(sock, gophermapfile, srvsideparams, config, pVer, directorytolist, remoteclientaddr, "php");
+    return;
+  }
+
+  gophermapfd = fopen(gophermapfile, "rb");
+  if (gophermapfd == NULL) {
+    syslog(LOG_WARNING, "ERROR: Failed to open the gophermap at '%s' (%s)", gophermapfile, strerror(errno));
+    return;
+  }
+  syslog(LOG_INFO, "Response=\"Return gophermap. (%s)", gophermapfile);
+
+  for (;;) {
+    if (sockreadline(fileno(gophermapfd), linebuff, 1023, NULL) < 0) break;
+    /* if it's an instruction to list files, do it, and move to next line */
+    if (strcasecmp(linebuff, "%FILES%") == 0) {
+      outputdircontent(sock, config, localfile, directorytolist);
+      continue;
+    }
+    /* explode the gophermap line into separate items */
+    if (explodegophermapline(linebuff, &itemtype, itemdesc, itemselector, itemserver, &itemport) != 0) {
+      sendline(sock, "3Parsing error\tfake\tfake\t0");
+      continue;
+    }
+    /* check values, and put default ones if some are missing */
+    if (itemserver[0] == 0) snprintf(itemserver, sizeof(itemserver), "%s", config->gopherhostname);
+    if (itemport == 0) itemport = 70;
+    /* if we are dealing with relative path on the local server, resolve it first */
+    if ((itemtype != 'i') && (itemselector[0] != '/') && (itemselector[0] != 0) && (strcasecmp(itemserver, config->gopherhostname) == 0) && (stringstartwith(itemselector, "URL:") == 0)) {
+      computerelativepath(linebuff, sizeof(linebuff), directorytolist, itemselector);
+      snprintf(itemselector, sizeof(itemselector), "%s", linebuff);
+    }
+    /* prepare the final line */
+    snprintf(linebuff, sizeof(linebuff), "%c%s\t%s\t%s\t%ld", itemtype, itemdesc, itemselector, itemserver, itemport);
+    /* send the final line */
+    sendline(sock, linebuff);
+  }
+  fclose(gophermapfd);
+}
+
+
+static void outputdir(int sock, struct MotsognirConfig *config, char *localfile, char *directorytolist, char *remoteclientaddr, char *srvsideparams) {
   char gophermapfile[1024];
   syslog(LOG_INFO, "The resource is a directory");
   if (lastcharofstring(localfile) != '/') strcat(localfile, "/");
@@ -945,14 +967,14 @@ static void outputdir(int sock, struct MotsognirConfig *config, char *localfile,
     /* do we have a static gophermap? */
     sprintf(gophermapfile, "%sgophermap", localfile);
     if (fexist(gophermapfile) != 0) {
-      outputgophermap(sock, config, localfile, gophermapfile, directorytolist);
+      outputgophermap(sock, config, localfile, gophermapfile, directorytolist, remoteclientaddr, srvsideparams);
       break;
     }
     /* do we have a cgi gophermap? */
     if (config->cgisupport != 0) {
       sprintf(gophermapfile, "%sgophermap.cgi", localfile);
       if (fexist(gophermapfile) != 0) {
-        execCgi(sock, gophermapfile, NULL, config, pVer, directorytolist, remoteclientaddr, NULL);
+        execCgi(sock, gophermapfile, srvsideparams, config, pVer, directorytolist, remoteclientaddr, NULL);
         break;
       }
     }
@@ -960,13 +982,13 @@ static void outputdir(int sock, struct MotsognirConfig *config, char *localfile,
     if (config->phpsupport != 0) {
       sprintf(gophermapfile, "%sgophermap.php", localfile);
       if (fexist(gophermapfile) != 0) {
-        execCgi(sock, gophermapfile, NULL, config, pVer, directorytolist, remoteclientaddr, "php");
+        execCgi(sock, gophermapfile, srvsideparams, config, pVer, directorytolist, remoteclientaddr, "php");
         break;
       }
     }
     /* is there a default gophermap we could use? */
     if (config->defaultgophermap != NULL) {  /* else use the default gophermap, if any is configured */
-      outputgophermap(sock, config, localfile, config->defaultgophermap, directorytolist);
+      outputgophermap(sock, config, localfile, config->defaultgophermap, directorytolist, remoteclientaddr, srvsideparams);
       break;
     }
     /* no gophermap found, simply list files & directories */
@@ -1341,7 +1363,7 @@ int main(int argc, char **argv) {
   }
 
   if (is_it_a_directory(localfile) != 0) {
-    outputdir(sock, &config, localfile, directorytolist, remoteclientaddr);
+    outputdir(sock, &config, localfile, directorytolist, remoteclientaddr, srvsideparams);
     close(sock);
     return(0);
   }

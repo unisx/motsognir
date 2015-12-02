@@ -36,10 +36,10 @@ make install DESTDIR=%{buildroot}
 %attr(755, root, root) %dir /usr/share/doc/motsognir
 %attr(644, root, root) %doc /usr/share/doc/motsognir/changes.txt
 %attr(644, root, root) %doc /usr/share/doc/motsognir/manual.pdf
+%attr(644, root, root) %doc /usr/share/man/man8/motsognir.8.gz
 %attr(644, root, root) %config /etc/motsognir.conf
 %attr(755, root, root) /usr/sbin/motsognir
 %attr(755, root, root) /etc/init.d/motsognir
-%attr(755, root, root) /etc/rc.d/motsognir
 
 %changelog
 * Sat Sep 24 2013 Mateusz Viste <mateusz@viste-family.net> 1.0
