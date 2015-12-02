@@ -1,4 +1,4 @@
-.TH MOTSOGNIR 8 "November 24, 2013" "" "The mighty gopher server"
+.TH MOTSOGNIR 8 "November 1, 2014" "" "The mighty gopher server"
 .SH NAME
 motsognir \- a simple, fast gopher server with CGI and PHP support
 .RE
@@ -93,6 +93,16 @@ bind=
 # instead of the real one.
 # The default path is /var/gopher/
 GopherRoot=/var/gopher/
+
+## User home directories ##
+# If you'd like to serve gopher content from user directories, using the
+# classic /~user/ URL scheme, then define the user directories location here
+# below. The configured location must contain a '%s' tag, which will be
+# substituted with the username by motsognir. This must be an absolute path.
+# If nothing is configured, then support for serving content from user
+# directories won't be available. Example:
+# UserDir=/home/%s/public_gopher/
+UserDir=
 
 ## chroot configuration ##
 # If you'd like to put Motsognir inside a chroot jail, configure here

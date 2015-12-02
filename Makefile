@@ -1,10 +1,10 @@
 CC ?= gcc
 CFLAGS += -Wall -Wextra -O3 -std=gnu89 -pedantic
 
-all: motsognir motsognir.8.gz
+all: motsognir extmaptest motsognir.8.gz
 
-motsognir: motsognir.o
-	$(CC) motsognir.o -o motsognir $(CFLAGS)
+motsognir: motsognir.o extmap.o
+	$(CC) motsognir.o extmap.o -o motsognir $(CFLAGS)
 
 motsognir.8.gz: motsognir.8
 	cat motsognir.8 | gzip > motsognir.8.gz
@@ -12,8 +12,14 @@ motsognir.8.gz: motsognir.8
 motsognir.o: motsognir.c
 	$(CC) -c motsognir.c -o motsognir.o $(CFLAGS)
 
+extmap.o: extmap.c
+	$(CC) -c extmap.c -o extmap.o $(CFLAGS)
+
+extmaptest: extmaptest.c extmap.o
+	$(CC) extmaptest.c extmap.o -o extmaptest $(CFLAGS)
+
 clean:
-	rm -f motsognir *.o *.gz
+	rm -f motsognir extmaptest *.o *.gz
 
 install:
 	mkdir -p $(PREFIX)/$(DESTDIR)/usr/sbin/

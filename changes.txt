@@ -1,5 +1,13 @@
 * History of changes for the Motsognir gopher server *
 
+v1.0.6 [11 Nov 2014]
+ - Support for custom file mapping (extension to gopher filetype),
+ - Serving gopher content from users directories, using the '/~username/' URL scheme (configurable),
+ - Motsognir simulates a 'not found' message whenever a client tries to explicitely fetch a gophermap file,
+ - Added support for sub-gophermap scripts,
+ - Default location for the configuration file can be #defined at compile time (-DCONFIGFILE=/etc/motsognir.conf),
+ - Updated the FreeBSD port files, kindly contributed by kaltheat.
+
 v1.0.5 [05 Oct 2014]
  - Sanitizing the environment before calling a CGI/PHP child (contributed by Matt Lewandowsky),
  - Fixed the $HOME, $USER and $USERNAME environment variable when dropping root privileges (contributed by Matt Lewandowsky),

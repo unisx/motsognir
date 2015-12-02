@@ -1,8 +1,8 @@
 /*
-    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
-    *  Motsognir - The mighty gopher server                                   *
-    *  Copyright (C) Mateusz Viste 2008, 2009, 2010, 2011, 2012, 2013, 2014   *
-    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+    *  Motsognir - The mighty gopher server                               *
+    *  Copyright (C) Mateusz Viste 2008-2014                              *
+    * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
    ----------------------------------------------------------------------
     This program is free software: you can redistribute it and/or modify
@@ -43,15 +43,24 @@
 #include <sys/wait.h>  /* WEXITSTATUS */
 
 #include "binary.h"
+#include "extmap.h"
 
 /* Constants */
-#define pVer "1.0.5"
+#define pVer "1.0.6"
 #define pDate "2008-2014"
 #define HOMEPAGE "http://motsognir.sourceforge.net"
+
+/* declare the default config file location, if not already declared from CLI
+ * at compile-time - esp. useful for systems that store config files in other
+ * locations, like /usr/local/etc/ for FreeBSD... */
+#ifndef CONFIGFILE
+  #define CONFIGFILE "/etc/motsognir.conf"
+#endif
 
 
 struct MotsognirConfig {
   char *gopherroot;
+  char *userdir;
   int gopherport;
   char *gopherhostname;
   char *defaultgophermap;
@@ -62,6 +71,7 @@ struct MotsognirConfig {
   char *capsserverdescription;
   int cgisupport;
   int phpsupport;
+  int subgophermaps;
   char *runasuser;
   uid_t runasuser_uid;
   gid_t runasuser_gid;
@@ -69,6 +79,8 @@ struct MotsognirConfig {
   char *chroot;
   char *httperrfile;
   char *bind;
+  char *extmapfile;
+  struct extmap_t *extmap;
 };
 
 
@@ -82,11 +94,8 @@ static void sanitizeenv(void) {
   unsetenv("TERM");
 }
 
-#include <stdio.h>
-#include <stdlib.h>
 
-
-/* Reads a file from disk, loads it into an array, and returns a FILE ptr */
+/* Reads a file from disk, loads it into an array, and returns a pointer to it */
 static char *readfiletomem(char *file) {
   char *source = NULL;
   FILE *fp = fopen(file, "rb");
@@ -117,12 +126,12 @@ static char *readfiletomem(char *file) {
 static int droproot(struct MotsognirConfig *config) {
   /* drop privileges */
   if (initgroups(config->runasuser, config->runasuser_gid) != 0 || setgid(config->runasuser_gid) != 0 || setuid(config->runasuser_uid) != 0) {
-    syslog(LOG_WARNING, "Error: Couldn't change to '%.32s' uid=%lu gid=%lu: %s", config->runasuser, (unsigned long)config->runasuser_uid, (unsigned long)config->runasuser_gid, strerror(errno));
+    syslog(LOG_WARNING, "ERROR: Couldn't change to '%.32s' uid=%lu gid=%lu: %s", config->runasuser, (unsigned long)config->runasuser_uid, (unsigned long)config->runasuser_gid, strerror(errno));
     return(-1);
   }
   /* it's all good, but let's double check (you never know) */
   if (getuid() != config->runasuser_uid) {
-    syslog(LOG_WARNING, "Error: For some mysterious reasons Motsognir was unable to switch to user '%s'.", config->runasuser);
+    syslog(LOG_WARNING, "ERROR: For some mysterious reasons Motsognir was unable to switch to user '%s'.", config->runasuser);
     return(-1);
   }
   /* Clean up the remnants of running as root */
@@ -138,7 +147,7 @@ static int droproot(struct MotsognirConfig *config) {
 
 
 static void sendline(int sock, char *dataline) {
-  /* I am using writev here to make sure that the line and the \r\n trailer will be sent at the same time (in one packet) */
+  /* I am using writev() here to make sure that the line and the \r\n trailer will be sent at the same time (in one packet) */
   struct iovec iov[2];
   iov[0].iov_base = dataline;
   iov[0].iov_len = strlen(dataline);
@@ -187,7 +196,7 @@ static void percencode(char *src, char *dst, int dstmaxlen) {
       break;
     }
     if (dstlen + 4 >= dstmaxlen) {
-      syslog(LOG_WARNING, "Error: reached percent encoding length limit - aborting");
+      syslog(LOG_WARNING, "WARNING: reached percent encoding length limit - aborting");
       break; /* stop the work if we reached our limit */
     }
     if (encodingrequired == 0) { /* if no encoding is needed, just put the char as-is */
@@ -268,13 +277,13 @@ static int percdecode(char *string) {
     /* since we are here, we are dealing with a percent-encoded thing - first make sure we are not in a dangerous position */
     if ((string[x + 1] == 0) || (string[x + 2] == 0)) {
       string[x] = 0;
-      syslog(LOG_WARNING, "Error: detected invalid percent encoding");
+      syslog(LOG_WARNING, "ERROR: detected invalid percent encoding");
       return(-1);
     }
     /* detect NULL chars, these shall never be decoded */
     if ((string[x + 1] == '0') && (string[x + 2] == '0')) {
       string[x] = 0;
-      syslog(LOG_WARNING, "Error: detected a dangerous percent encoding (%%00)");
+      syslog(LOG_WARNING, "ERROR: detected a dangerous percent encoding (%%00)");
       return(-1);
     }
     /* decode anything else */
@@ -282,7 +291,7 @@ static int percdecode(char *string) {
     secondnibble = hex2int(string[++x]);
     if ((firstnibble < 0) || (secondnibble < 0)) {
       string[x - 2] = 0;
-      syslog(LOG_WARNING, "Error: detected an invalid percent encoding");
+      syslog(LOG_WARNING, "ERROR: detected an invalid percent encoding");
       return(-1);
     }
     string[y++] = (firstnibble << 4) | secondnibble;
@@ -331,24 +340,20 @@ static void printcapstxt(int sock, struct MotsognirConfig *config, char *version
 
 
 static void about(char *version, char *datestring, char *homepage) {
-  printf("Motsognir v%s Copyright (C) Mateusz Viste %s\n", version, datestring);
-  printf("\n");
-  printf("This program is free software: you can redistribute it and/or modify it under\n");
-  printf("the terms of the GNU General Public License as published by the Free Software\n");
-  printf("Foundation, either version 3 of the License, or (at your option) any later\n");
-  printf("version.\n");
-  printf("This program is distributed in the hope that it will be useful, but WITHOUT ANY\n");
-  printf("WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A\n");
-  printf("PARTICULAR PURPOSE. See the GNU General Public License for more details.\n");
-  printf("\n");
-  printf("Motsognir is a robust and reliable open-source gopher server for POSIX systems.\n");
-  printf("Motsognir is entirely written in ANSI C, without any external dependencies.\n");
-  printf("\n");
-  printf("Available command-line parameters:\n");
-  printf("  --config file.conf       use a configuration file in a custom location\n");
-  printf("\n");
-  printf("homepage: %s\n", homepage);
-  printf("\n");
+  printf("Motsognir v%s Copyright (C) Mateusz Viste %s\n\n", version, datestring);
+  printf("This program is free software: you can redistribute it and/or modify it under\n"
+         "the terms of the GNU General Public License as published by the Free Software\n"
+         "Foundation, either version 3 of the License, or (at your option) any later\n"
+         "version.\n");
+  printf("This program is distributed in the hope that it will be useful, but WITHOUT ANY\n"
+         "WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A\n"
+         "PARTICULAR PURPOSE. See the GNU General Public License for more details.\n\n");
+  printf("Motsognir is a robust and reliable open-source gopher server for POSIX systems.\n"
+         "Motsognir is entirely written in ANSI C, without any external dependencies.\n\n");
+  printf("Available command-line parameters:\n"
+         "  --config file.conf       use a configuration file in a custom location\n"
+         "\n");
+  printf("homepage: %s\n\n", homepage);
 }
 
 
@@ -412,8 +417,12 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
   int state = 0; /* 0=reading token, 1=reading value, 2=reading comment */
   struct passwd *pw;
 
+  /* zero out the config structure, just in case */
+  memset(config, 0, sizeof(*config));
+
   /* load default values first */
   config->gopherroot = "/var/gopher/";
+  config->userdir = NULL;
   config->gopherport = 70;
   config->gopherhostname = NULL;
   config->verbosemode = 0;
@@ -424,6 +433,7 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
   config->defaultgophermap = NULL;
   config->cgisupport = 0;
   config->phpsupport = 0;
+  config->subgophermaps = 0;
   config->runasuser = NULL;
   config->runasuser_uid = 0;
   config->runasuser_gid = 0;
@@ -431,10 +441,12 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
   config->chroot = NULL;
   config->httperrfile = NULL;
   config->bind = NULL;
+  config->extmapfile = NULL;
+  config->extmap = NULL;
 
   fd = fopen(configfile, "r");
   if (fd == NULL) {
-    syslog(LOG_WARNING, "Failed to open the configuration file at '%s'", configfile);
+    syslog(LOG_WARNING, "WARNING: Failed to open the configuration file at '%s'", configfile);
     return(-1);
   }
 
@@ -490,11 +502,17 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
                 config->cgisupport = atoi(valuebuff);
               } else if (strcasecmp(tokenbuff, "GopherPhpSupport") == 0) {
                 config->phpsupport = atoi(valuebuff);
+              } else if (strcasecmp(tokenbuff, "SubGophermaps") == 0) {
+                config->subgophermaps = atoi(valuebuff);
               } else if (strcasecmp(tokenbuff, "chroot") == 0) {
                 config->chroot = strdup(valuebuff);
+              } else if (strcasecmp(tokenbuff, "userdir") == 0) {
+                config->userdir = strdup(valuebuff);
               } else if (strcasecmp(tokenbuff, "httperrfile") == 0) {
                 config->httperrfile = readfiletomem(valuebuff);
-                if (config->httperrfile == NULL) syslog(LOG_WARNING, "Failed to load custom http error file '%s'. Default content will be used instead.", valuebuff);
+                if (config->httperrfile == NULL) syslog(LOG_WARNING, "WARNING: Failed to load custom http error file '%s'. Default content will be used instead.", valuebuff);
+              } else if (strcasecmp(tokenbuff, "ExtMapFile") == 0) {
+                config->extmapfile = strdup(valuebuff);
             }
             valuebuffpos = 0;
           } else if (bytebuff != '\r') {
@@ -512,29 +530,44 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
   /* Perform some validation of the configuration content... */
 
   if (config->verbosemode < 0) {
-    syslog(LOG_ERR, "Invalid verbose level found in the configuration file (%d).", config->verbosemode);
+    syslog(LOG_ERR, "ERROR: Invalid verbose level found in the configuration file (%d)", config->verbosemode);
     return(-1);
   }
 
   if (config->gopherport < 1) {
-    syslog(LOG_ERR, "Invalid gopher port found in the configuration file (%d)", config->gopherport);
+    syslog(LOG_ERR, "ERROR: Invalid gopher port found in the configuration file (%d)", config->gopherport);
     return(-1);
   }
 
   if (config->gopherroot[0] == 0) {
-    syslog(LOG_ERR, "Missing gopher root path in the configuration file. Please add a valid 'GopherRoot=' directive");
+    syslog(LOG_ERR, "ERROR: Missing gopher root path in the configuration file. Please add a valid 'GopherRoot=' directive");
     return(-1);
   }
 
+  /* if userdir is definied, it shall be an absolute path that includes a %s */
+  if (config->userdir != NULL) {
+    if ((config->userdir[0] != '/') || (strstr(config->userdir, "%s") == NULL)) {
+      syslog(LOG_ERR, "ERROR: The UserDir configuration is invalid. It shall be an absolute path (start by '/') and contain the '%%s' placeholder.");
+      return(-1);
+    }
+  }
+
   if (config->gopherhostname == NULL) {
-    syslog(LOG_WARNING, "Missing gopher hostname in the configuration file. The local IP address will be used instead. Please add a valid 'GopherHostname=' directive.");
+    syslog(LOG_WARNING, "WARNING: Missing gopher hostname in the configuration file. The local IP address will be used instead. Please add a valid 'GopherHostname=' directive.");
+  }
+
+  /* load extension mappings (ext -> gopher type pairs) */
+  config->extmap = extmap_load(config->extmapfile);
+  if (config->extmap == NULL) {
+    syslog(LOG_ERR, "ERROR: failed to load the extension mapping file '%s'", config->extmapfile);
+    return(-1);
   }
 
   /* if a 'RunAsUser' directive is present, resolve the username to a proper uid/gid (because later we might be unable to do it from within a chroot jail) */
   if (config->runasuser != NULL) {
     pw = getpwnam(config->runasuser);
     if (pw == NULL) {
-      syslog(LOG_WARNING, "Error: Could not map the username '%s' to a valid uid.", config->runasuser);
+      syslog(LOG_ERR, "ERROR: Could not map the username '%s' to a valid uid", config->runasuser);
       return(-1);
     }
     free(config->runasuser);              /* free the original username... */
@@ -577,52 +610,18 @@ static char *getfileextension(char *filename) {
   int x;
   /* find the LAST occurence of the '.' char in the name */
   for (x = 0; filename[x] != 0; x++) {
-    if (filename[x] == '.') ext = &filename[x];
+    if (filename[x] == '.') ext = &filename[x + 1];
   }
   if (ext != NULL) return(ext);
   /* if no dot present in the filename, return an empty string using the filename's NULL terminator */
-  for (ext = filename; *ext != 0; ext++);
-  return(ext);
+  return(filename + x);
 }
 
 
 /* Map the gopher type of a file, based on its extension */
-static char DetectGopherType(char *filename) {
+static char DetectGopherType(char *filename, struct extmap_t *extmap) {
   char *ext = getfileextension(filename);
-  if (strcasecmp(ext, ".txt") == 0) {
-      return('0');
-    } else if (strcasecmp(ext, ".gif") == 0) {
-      return('g');
-    } else if ((strcasecmp(ext, ".jpg") == 0) ||
-               (strcasecmp(ext, ".jpeg") == 0) ||
-               (strcasecmp(ext, ".png") == 0) ||
-               (strcasecmp(ext, ".bmp") == 0) ||
-               (strcasecmp(ext, ".pcx") == 0) ||
-               (strcasecmp(ext, ".ico") == 0) ||
-               (strcasecmp(ext, ".tif") == 0) ||
-               (strcasecmp(ext, ".tiff") == 0) ||
-               (strcasecmp(ext, ".svg") == 0) ||
-               (strcasecmp(ext, ".eps") == 0)) {
-      return('I');
-    } else if ((strcasecmp(ext, ".mp3") == 0) ||
-               (strcasecmp(ext, ".mp2") == 0) ||
-               (strcasecmp(ext, ".wav") == 0) ||
-               (strcasecmp(ext, ".mid") == 0) ||
-               (strcasecmp(ext, ".ogg") == 0) ||
-               (strcasecmp(ext, ".wma") == 0) ||
-               (strcasecmp(ext, ".flac") == 0) ||
-               (strcasecmp(ext, ".mpc") == 0) ||
-               (strcasecmp(ext, ".aiff") == 0) ||
-               (strcasecmp(ext, ".aac") == 0)) {
-      return('s');
-    } else if ((strcasecmp(ext, ".htm") == 0) ||
-               (strcasecmp(ext, ".html") == 0)) {
-      return('h');
-    } else if (strcasecmp(ext, ".pdf") == 0) {
-      return('P');
-    } else {
-      return('9');
-  }
+  return(extmap_lookup(extmap, ext));
 }
 
 
@@ -743,7 +742,7 @@ static void outputdircontent(int sock, struct MotsognirConfig *config, char *loc
   /* load the content of the directory */
   dirptr = opendir(localfile);
   if (dirptr == NULL) {
-    syslog(LOG_INFO, "Error: Could not access directory '%s' (%s)", localfile, strerror(errno));
+    syslog(LOG_WARNING, "ERROR: Could not access directory '%s' (%s)", localfile, strerror(errno));
     sendline(sock, "3Error: could not access directory\tfake\tfake\t0");
     return;
   }
@@ -751,7 +750,7 @@ static void outputdircontent(int sock, struct MotsognirConfig *config, char *loc
   direntriescount = scandir(localfile, &direntries, NULL, motsognir_dirsort);
   closedir(dirptr);
   if (direntriescount < 0) {
-    syslog(LOG_WARNING, "Error occured while scanning the directory '%s': %s", localfile, strerror(errno));
+    syslog(LOG_WARNING, "ERROR: Failed to scan the directory '%s': %s", localfile, strerror(errno));
     return;
   }
 
@@ -764,12 +763,14 @@ static void outputdircontent(int sock, struct MotsognirConfig *config, char *loc
     char entryselector[1024];
     char entryselector_encoded[1024];
     if (direntries[x]->d_name[0] == '.') continue; /* skip any entry starting with '.' (these are either hidden files or system stuff like '.' or '..') */
-    if (strcmp(direntries[x]->d_name, "gophermap") == 0) continue; /* skip gophermap entries */
+    if (strcmp(direntries[x]->d_name, "gophermap") == 0) continue;     /* skip gophermap entries (txt) */
+    if (strcmp(direntries[x]->d_name, "gophermap.cgi") == 0) continue; /* skip gophermap entries (cgi) */
+    if (strcmp(direntries[x]->d_name, "gophermap.php") == 0) continue; /* skip gophermap entries (php) */
     entriesdisplayed += 1;
     if (direntries[x]->d_type == DT_DIR) {
         entrytype = '1';
       } else {
-        entrytype = DetectGopherType(direntries[x]->d_name);
+        entrytype = DetectGopherType(direntries[x]->d_name, config->extmap);
     }
     snprintf(entryselector, sizeof(entryselector), "%s%s", directorytolist, direntries[x]->d_name);
     percencode(entryselector, entryselector_encoded, sizeof(entryselector_encoded));
@@ -959,7 +960,7 @@ static void execCgi(int sock, char *localfile, char *srvsideparams, struct Motso
   }
   cgifd = popen(cmd, "r");
   if (cgifd == NULL) {
-    syslog(LOG_WARNING, "Error: failed to run the server-side app '%s'", localfile);
+    syslog(LOG_WARNING, "ERROR: failed to run the server-side app '%s'", localfile);
     return;
   }
   /* read from the CGI application, and send to the socket */
@@ -972,9 +973,9 @@ static void execCgi(int sock, char *localfile, char *srvsideparams, struct Motso
   /* close the pipe */
   res = pclose(cgifd);
   if (res == -1) {
-      syslog(LOG_WARNING, "Warning: call to server-side app '%s' failed (%s)", localfile, strerror(errno));
+      syslog(LOG_WARNING, "WARNING: call to server-side app '%s' failed (%s)", localfile, strerror(errno));
     } else if (WEXITSTATUS(res) != 0) {
-      syslog(LOG_WARNING, "Warning: server-side app '%s' terminated with a non-zero exit code (%d)", localfile, WEXITSTATUS(res));
+      syslog(LOG_WARNING, "WARNING: server-side app '%s' terminated with a non-zero exit code (%d)", localfile, WEXITSTATUS(res));
   }
 }
 
@@ -1014,6 +1015,11 @@ static void outputgophermap(int sock, struct MotsognirConfig *config, char *loca
     /* explode the gophermap line into separate items */
     if (explodegophermapline(linebuff, &itemtype, itemdesc, itemselector, itemserver, &itemport) != 0) {
       sendline(sock, "3Parsing error\tfake\tfake\t0");
+      continue;
+    }
+    /* if a sub-gophermap script is provided (and feature is enabled), run it now */
+    if (itemtype == '=') {
+      if (config->subgophermaps != 0) execCgi(sock, itemdesc, "", config, pVer, "", remoteclientaddr, NULL);
       continue;
     }
     /* check values, and put default ones if some are missing */
@@ -1114,7 +1120,7 @@ static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrst
   }
 
   /* I set the socket to be reusable, to avoid having to wait for a longish time when the server is restarted */
-  if (setsockopt(sockmaster, SOL_SOCKET, SO_REUSEADDR, (char *)&one, sizeof(one)) < 0) syslog(LOG_WARNING, "Warning: failed to set REUSEADDR on main socket");
+  if (setsockopt(sockmaster, SOL_SOCKET, SO_REUSEADDR, (char *)&one, sizeof(one)) < 0) syslog(LOG_WARNING, "WARNING: failed to set REUSEADDR on main socket");
 
   /* Initialize socket structure */
   memset(&serv_addr, 0, sizeof(serv_addr));
@@ -1177,7 +1183,7 @@ static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrst
   freopen( "/dev/null", "w", stderr);
 
   /* I want to be the pack master now (aka session leader) */
-  if (setsid() == -1) syslog(LOG_WARNING, "Warning: setsid() failed (%s)", strerror(errno));
+  if (setsid() == -1) syslog(LOG_WARNING, "WARNING: setsid() failed (%s)", strerror(errno));
 
   /* if a chroot() is configured, execute it now */
   if (config->chroot != NULL) {
@@ -1189,7 +1195,7 @@ static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrst
   }
 
   /* set the working directory to the root directory */
-  if (chdir ("/") == -1) syslog(LOG_WARNING, "Warning: failed to switch to / directory (%s)", strerror(errno));
+  if (chdir ("/") == -1) syslog(LOG_WARNING, "WARNING: failed to switch to / directory (%s)", strerror(errno));
 
   /* sanitize the environment (remove a few useless env variables) */
   sanitizeenv();
@@ -1310,7 +1316,7 @@ static void sendbinfiletosock(int sock, char *filename) {
 /* Looks at a requests to detect whether it might be HTTP. Returns 0 if no HTTP detected, non-zero otherwise. */
 static int requestlookslikehttp(char *req) {
   if ((req[0] == 'G') && (req[1] == 'E') && (req[2] == 'T') && (req[3] == ' ') && (req[4] == '/')) { /* starts by 'GET /'... */
-    if (strstr(req, "HTTP/") != NULL) return(1); /* contains 'HTTP/' -> it is a HTTP request */
+    if (strstr(req, " HTTP/") != NULL) return(1); /* contains ' HTTP/' -> it is a HTTP request */
   }
   return(0);
 }
@@ -1376,15 +1382,50 @@ static int is_it_a_directory(char *localfile) {
 }
 
 
+static void BuildLocalFileAndRootDir(char *localfile, char *rootdir, struct MotsognirConfig *config, char *directorytolist) {
+  /* if this is a username-like URL (/~user/file.dat) AND UserDir is defined, perform a substitution */
+  if ((directorytolist[0] == '/') && (directorytolist[1] == '~') && (config->userdir != NULL)) {
+      char username[1024];
+      int x;
+      /* extract the user name */
+      for (x = 0;; x++) {
+        username[x] = directorytolist[x + 2];
+        if (username[x] == '/') {
+          username[x] = 0;
+          break;
+        }
+        if (username[x] == 0) break;
+      }
+      /* compute user's home directory and use as root directory */
+      sprintf(rootdir, config->userdir, username);
+      /* build the path all together */
+      sprintf(localfile, "%s%s", rootdir, directorytolist + x + 2);
+    } else { /* else it's a normal path to append to gopherroot */
+      strcpy(rootdir, config->gopherroot);
+      sprintf(localfile, "%s%s", config->gopherroot, directorytolist);
+  }
+}
+
+
+/* returns non-zero if the filename looks like a gophermap, zero otherwise */
+static int islocalfileagophermap(char *file) {
+  if ((stringendswith(file, "/gophermap") != 0) ||
+      (stringendswith(file, "/gophermap.cgi") != 0) ||
+      (stringendswith(file, "/gophermap.php") != 0)) return(1);
+  return(0);
+}
+
+
 int main(int argc, char **argv) {
   char *securitycheckresult;
   char directorytolist[4096];
   char localfile[4096];
+  char rootdir[4096];
   char remoteclientaddr[64];
   char localserveraddr[64];
   char *srvsideparams;
   char gophertype;
-  char *configfile = "/etc/motsognir.conf";
+  char *configfile = CONFIGFILE;
   int sock;
   struct MotsognirConfig config;
   time_t StartTime;
@@ -1402,15 +1443,16 @@ int main(int argc, char **argv) {
     }
   }
 
+  /* load motsognir's configuration from file */
   if (loadconfig(&config, configfile) != 0) {
-    puts("A configuration error has been detected. Check the logs for details.");
+    puts("ERROR: A configuration error has been detected. Check the logs for details.");
     return(9);
   }
 
   sock = waitforconn(config.gopherport, remoteclientaddr, sizeof(remoteclientaddr), localserveraddr, sizeof(localserveraddr), &config);
   if (sock == -1) return(0);
   if (sock < 0) {
-    puts("a fatal error occured. check the logs for details.");
+    puts("ERROR: a fatal error occured. check the logs for details.");
     return(2);
   }
 
@@ -1465,8 +1507,8 @@ int main(int argc, char **argv) {
     return(0);
   }
 
-  /* build the localfile path */
-  sprintf(localfile, "%s%s", config.gopherroot, directorytolist);
+  /* build the localfile path, and the root directory (the latter is necessary for further evasion checks */
+  BuildLocalFileAndRootDir(localfile, rootdir, &config, directorytolist);
 
   /* Remove double occurences of slashes in paths */
   RemoveDoubleChar(directorytolist, '/');
@@ -1474,7 +1516,7 @@ int main(int argc, char **argv) {
 
   syslog(LOG_INFO, "Requested resource: %s / Local resource: %s", directorytolist, localfile);
 
-  if (checkforevasion(config.gopherroot, localfile) != 0) {
+  if (checkforevasion(rootdir, localfile) != 0) {
     syslog(LOG_INFO, "Evasion attempt. Forbidden!");
     sendline(sock, "iForbidden!\tfake\tfake\t0");
     sendline(sock, ".");
@@ -1497,8 +1539,9 @@ int main(int argc, char **argv) {
     return(0);
   }
 
-  /* the query is requesting a file - does it exist at all? */
-  if (fexist(localfile) == 0) {
+  /* the query is requesting a file - does it exist at all?
+     if client asks for a gophermap, we fake a 'not found' message as well */
+  if ((fexist(localfile) == 0) || (islocalfileagophermap(localfile) != 0)) {
     syslog(LOG_INFO, "FileExists check: the file doesn't exists");
     sendline(sock, "3The selected resource doesn't exist!\tfake\tfake\t0");
     sendline(sock, "iThe selected resource cannot be located.\tfake\tfake\t0");
@@ -1508,14 +1551,14 @@ int main(int argc, char **argv) {
   }
 
   /* if the query is pointing to a CGI file, and CGI support is enabled - execute the query */
-  if ((strcmp(getfileextension(localfile), ".cgi") == 0) && (config.cgisupport != 0)) {
+  if ((strcmp(getfileextension(localfile), "cgi") == 0) && (config.cgisupport != 0)) {
     execCgi(sock, localfile, srvsideparams, &config, pVer, directorytolist, remoteclientaddr, NULL);
     close(sock);
     return(0);
   }
 
   /* if the query is pointing to a PHP file, and PHP support is enabled - execute the query */
-  if ((strcmp(getfileextension(localfile), ".php") == 0) && (config.phpsupport != 0)) {
+  if ((strcmp(getfileextension(localfile), "php") == 0) && (config.phpsupport != 0)) {
     execCgi(sock, localfile, srvsideparams, &config, pVer, directorytolist, remoteclientaddr, "php");
     close(sock);
     return(0);
@@ -1523,7 +1566,7 @@ int main(int argc, char **argv) {
 
   /* we want a normal file's content */
   syslog(LOG_INFO, "Returning file '%s'", localfile);
-  gophertype = DetectGopherType(localfile);
+  gophertype = DetectGopherType(localfile, config.extmap);
   switch (gophertype) {
     case '0':
     case '2':
