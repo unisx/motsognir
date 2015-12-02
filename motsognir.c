@@ -36,11 +36,12 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>  /* WEXITSTATUS */
 
 #include "binary.h"
 
 /* Constants */
-#define pVer "1.0.1"
+#define pVer "1.0.2"
 #define pDate "2008-2013"
 #define HOMEPAGE "http://sourceforge.net/projects/motsognir/"
 
@@ -188,13 +189,9 @@ static int hex2int(char ch) {
 }
 
 
-/* decodes a string from percent encoding to a 'normal' string, in-place. */
-static void percdecode(char *string) {
+/* decodes a string from percent encoding to a 'normal' string, in-place. returns 0 on success, non-zero if decoding fails. */
+static int percdecode(char *string) {
   int x, y, firstnibble, secondnibble;
-  /* First replace any '+' by a space */
-  for (x = 0; string[x] != 0; x++) {
-  }
-  /* Next, look for % encodings and resolve them */
   y = 0;
   for (x = 0; string[x] != 0; x++) {
     /* if different than %, write it as-is (or as a space, if we got a +), and continue */
@@ -209,27 +206,28 @@ static void percdecode(char *string) {
     /* since we are here, we are dealing with a percent-encoded thing - first make sure we are not in a dangerous position */
     if ((string[x + 1] == 0) || (string[x + 2] == 0)) {
       string[x] = 0;
-      syslog(LOG_WARNING, "detected invalid percent encoding");
-      break;
+      syslog(LOG_WARNING, "Error: detected invalid percent encoding");
+      return(-1);
     }
     /* detect NULL chars, these shall never be decoded */
     if ((string[x + 1] == '0') && (string[x + 2] == '0')) {
       string[x] = 0;
-      syslog(LOG_WARNING, "detected a dangerous percent encoding (%%00)");
-      break;
+      syslog(LOG_WARNING, "Error: detected a dangerous percent encoding (%%00)");
+      return(-1);
     }
     /* decode anything else */
     firstnibble = hex2int(string[++x]);
     secondnibble = hex2int(string[++x]);
     if ((firstnibble < 0) || (secondnibble < 0)) {
       string[x - 2] = 0;
-      syslog(LOG_WARNING, "detected an invalid percent encoding");
-      break;
+      syslog(LOG_WARNING, "Error: detected an invalid percent encoding");
+      return(-1);
     }
     string[y++] = (firstnibble << 4) | secondnibble;
   }
   /* terminate the result */
   string[y] = 0;
+  return(0);
 }
 
 
@@ -897,7 +895,12 @@ static void execCgi(int sock, char *localfile, char *srvsideparams, struct Motso
     send(sock, &bytebuff, 1, 0);
   }
   /* close the pipe */
-  pclose(cgifd);
+  res = pclose(cgifd);
+  if (res == -1) {
+      syslog(LOG_WARNING, "Warning: call to server-side app '%s' failed (%s)", localfile, strerror(errno));
+    } else if (WEXITSTATUS(res) != 0) {
+      syslog(LOG_WARNING, "Warning: server-side app '%s' terminated with a non-zero exit code (%d)", localfile, WEXITSTATUS(res));
+  }
 }
 
 
@@ -1097,16 +1100,21 @@ static void sendtxtfiletosock(int sock, char *filename) {
 
 static void sendbinfiletosock(int sock, char *filename) {
   FILE *fd;
-  unsigned char buff[1024];
+  unsigned char *buff;
   size_t bytesread;
-  /* allocate a buffer to read file's data */
+  int buff_len = 1024 * 1024;  /* allocate a big buffer to read file's content (1M) */
+  buff = malloc(buff_len);
+  if (buff == NULL) {
+    syslog(LOG_WARNING, "ERROR: Out of memory while trying to allocate buffer for file");
+    return;
+  }
   fd = fopen(filename, "rb");
   if (fd == NULL) { /* file could not be opened */
     syslog(LOG_WARNING, "ERROR: File '%s' could not be opened", filename);
     return;
   }
   for (;;) {
-    bytesread = fread(buff, 1, 1024, fd);
+    bytesread = fread(buff, 1, buff_len, fd);
     if (bytesread <= 0) break; /* end of file (I guess) */
     send(sock, buff, bytesread, 0);
   }
@@ -1252,7 +1260,10 @@ int main(int argc, char **argv) {
   srvsideparams = explode_serverside_params_from_query(directorytolist);
 
   /* Decode percent-encoded data - note that this must be done AFTER we separated server side params, because QUERY_STRING must NOT be decoded in any way */
-  percdecode(directorytolist);
+  if (percdecode(directorytolist) != 0) {
+    syslog(LOG_WARNING, "Percent decoding on request failed. Query aborted.");
+    return(0);
+  }
 
   /* Once we decoded the request, check that it doesn't contains any nasty stuff */
   securitycheckresult = gophersecuritycheck(directorytolist);

@@ -15,6 +15,8 @@ clean:
 install:
 	mkdir -p $(DESTDIR)/usr/sbin/
 	mkdir -p $(DESTDIR)/etc/init.d/
+	mkdir -p $(DESTDIR)/usr/share/doc/packages/motsognir/
 	cp motsognir $(DESTDIR)/usr/sbin/
 	cp motsognir.conf $(DESTDIR)/etc/
 	cp initd_motsognir $(DESTDIR)/etc/init.d/motsognir
+	cp license.txt changes.txt manual.pdf $(DESTDIR)/usr/share/doc/packages/motsognir/

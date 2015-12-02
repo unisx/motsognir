@@ -5,14 +5,14 @@
 #
 
 Name: motsognir
-Version: 1.0.1
+Version: 1.0.2
 Release: 1%{?dist}
 Summary: A robust, reliable and easy to install gopher server
 Url: http://sourceforge.net/projects/motsognir/
 Group: Productivity/Networking/Other
-
+BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 License: GPL-3.0+
-Source0: motsognir-1.0.1.tar.gz
+Source0: motsognir-1.0.2.tar.gz
 
 BuildRequires: gcc
 
@@ -30,16 +30,16 @@ make
 %check
 
 %install
-make install DESTDIR=%buildroot
-#install -D motsognir %buildroot/%{_sbindir}/motsognir
-#install -D motsognir.conf %buildroot/%{_sysconfdir}/motsognir.conf
-#install -D initd_motsognir %buildroot/%{_sysconfdir}/init.d/motsognir
+make install DESTDIR=%{buildroot}
 
 %files
-%attr(644, root, root) %doc license.txt changes.txt manual.pdf
-%attr(644, root, root) %config %{_sysconfdir}/motsognir.conf
-%attr(755, root, root) %{_sbindir}/motsognir
-%attr(755, root, root) %{_sysconfdir}/init.d/motsognir
+%attr(755, root, root) %dir /usr/share/doc/packages/motsognir
+%attr(644, root, root) %doc /usr/share/doc/packages/motsognir/license.txt
+%attr(644, root, root) %doc /usr/share/doc/packages/motsognir/changes.txt
+%attr(644, root, root) %doc /usr/share/doc/packages/motsognir/manual.pdf
+%attr(644, root, root) %config /etc/motsognir.conf
+%attr(755, root, root) /usr/sbin/motsognir
+%attr(755, root, root) /etc/init.d/motsognir
 
 %changelog
 * Sat Sep 24 2013 Mateusz Viste <mateusz@viste-family.net> 1.0

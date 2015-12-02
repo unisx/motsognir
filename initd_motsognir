@@ -20,21 +20,42 @@ test -x $DAEMON || exit 5
 
 case $1 in
         start)
-                log_daemon_msg "Starting gopher server" "motsognir"
-                start-stop-daemon --start --quiet --oknodo --startas $DAEMON --exec $DAEMON
+                echo -n "Starting gopher server... "
+                $DAEMON > /dev/null
                 status=$?
-                log_end_msg $status
+                if [ "$status" -eq 0 ]; then
+                  echo "OK"
+                  exit 0
+                else
+                  echo "Failed!"
+                  exit 1
+                fi
                 ;;
         stop)
-                log_daemon_msg "Stopping gopher server" "motsognir"
-                start-stop-daemon --stop --quiet --oknodo --exec $DAEMON
-                log_end_msg $?
+                echo -n "Stopping gopher server... "
+                killall $DAEMON > /dev/null
+                status=$?
+                if [ "$status" -eq 0 ]; then
+                  echo "OK"
+                  exit 0
+                else
+                  echo "Failed!"
+                  exit 1
+                fi
                 ;;
         restart)
                 $0 stop && sleep 2 && $0 start
                 ;;
         status)
-                status_of_proc $DAEMON "Gopher server"
+                pidof $DAEMON > /dev/null
+                status=$?
+                if [ "$status" -eq 0 ]; then
+                  echo "daemon is running"
+                  exit 0
+                else
+                  echo "daemon is not running"
+                  exit 1
+                fi
                 ;;
         *)
                 echo "Usage: $0 {start|stop|restart|status}"
