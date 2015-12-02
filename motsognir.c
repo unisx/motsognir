@@ -24,6 +24,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <grp.h>
+#include <limits.h>  /* required by FreeBSD to define PATH_MAX */
 #include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
@@ -33,6 +34,9 @@
 #include <time.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>  /* required by FreeBSD to define in6addr_any */
+#include <netinet/tcp.h>
+#include <sys/uio.h>     /* writev() */
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -41,10 +45,9 @@
 #include "binary.h"
 
 /* Constants */
-#define pVer "1.0.2"
+#define pVer "1.0.3"
 #define pDate "2008-2013"
 #define HOMEPAGE "http://sourceforge.net/projects/motsognir/"
-
 
 
 struct MotsognirConfig {
@@ -83,8 +86,13 @@ static int droproot(const char *username, uid_t uid, gid_t gid) {
 
 
 static void sendline(int sock, char *dataline) {
-  send(sock, dataline, strlen(dataline), 0);
-  send(sock, "\r\n", 2, 0);
+  /* I am using writev here to make sure that the line and the \r\n trailer will be sent at the same time (in one packet) */
+  struct iovec iov[2];
+  iov[0].iov_base = dataline;
+  iov[0].iov_len = strlen(dataline);
+  iov[1].iov_base = "\r\n";
+  iov[1].iov_len = 2;
+  writev(sock, iov, 2);
 }
 
 
@@ -545,13 +553,27 @@ static char DetectGopherType(char *filename) {
 
 
 /* reads a single line from a file descriptor. returns the length of the line (can be zero). Returns -1 on error or EOF). */
-static int sockreadline(int sock, char *buf, int n) {
+static int sockreadline(int sock, char *buf, int n, time_t *timeoutStartTime) {
   int numRead, totRead = 0, gotatleastonebyte = 0;
   char ch;
+  struct timeval tv;
+  /* set the socket to return after 1s, so we can check for real timeout every second */
+  if (timeoutStartTime != NULL) {
+    tv.tv_sec = 1;  /* 1s timeout */
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,(struct timeval *)&tv,sizeof(struct timeval));
+  }
+  /* start the loop */
   for (;;) {
     numRead = read(sock, &ch, 1);
+    /* check for timeout first (we accept requests that are sent in max 10s) */
+    if ((timeoutStartTime != NULL) && (time(NULL) - *timeoutStartTime >= 10)) {
+      syslog(LOG_INFO, "Request takes too long to come. Connection aborted.");
+      return(-1);
+    }
+    /* if timeout not reached yet, let's see what read() said */
     if (numRead == -1) {
-        if (errno == EINTR) {       /* Interrupted --> restart read() */
+        if ((errno == EINTR) || (errno == EAGAIN) || (errno == EWOULDBLOCK)) {   /* Interrupted --> restart read() */
             continue;
           } else {
             return(-1);             /* Some other error */
@@ -569,9 +591,17 @@ static int sockreadline(int sock, char *buf, int n) {
         }
     }
   }
+  /* restore the RX timeout on the socket to be within default value */
+  if (timeoutStartTime != NULL) {
+    tv.tv_sec = 0;  /* no timeout */
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,(struct timeval *)&tv,sizeof(struct timeval));
+  }
+  /* terminate the buffer and return the result */
   *buf = 0;
   return(totRead);
 }
+
 
 static void exturlredirector(int sock, char *directorytolist) {
   char *rawurl = directorytolist + 4;
@@ -817,7 +847,7 @@ static void outputgophermap(int sock, struct MotsognirConfig *config, char *loca
   syslog(LOG_INFO, "Response=\"Return gophermap. (%s)", gophermapfile);
 
   for (;;) {
-    if (sockreadline(fileno(gophermapfd), linebuff, 1023) < 0) break;
+    if (sockreadline(fileno(gophermapfd), linebuff, 1023, NULL) < 0) break;
     /* if it's an instruction to list files, do it, and move to next line */
     if (strcasecmp(linebuff, "%FILES%") == 0) {
       outputdircontent(sock, config, localfile, directorytolist);
@@ -950,9 +980,9 @@ static void outputdir(int sock, struct MotsognirConfig *config, char *localfile,
 }
 
 
-static int waitforconn(int gopherport, char *clientipaddrstr, struct MotsognirConfig *config) {
+static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrstr_maxlen, struct MotsognirConfig *config) {
   int sockmaster, sockslave;
-  int one = 1;  /* this is used only to set the REUSEADDR option on the socket later */
+  int one = 1;  /* this is used by setsockopt() calls on the socket later */
   socklen_t clilen;
   struct sockaddr_in6 serv_addr, cli_addr;
   pid_t mypid;
@@ -972,6 +1002,14 @@ static int waitforconn(int gopherport, char *clientipaddrstr, struct MotsognirCo
   serv_addr.sin6_family = AF_INET6;
   serv_addr.sin6_addr = in6addr_any;
   serv_addr.sin6_port = htons(gopherport);
+
+  /* Explicitely mark the socket as NOT being IPV6-only. This is needed on systems that have a system-wide sysctl net.inet6.ip6.v6only=1 (by default every *nix besides Linux...)*/
+  #ifdef IPV6_BINDV6ONLY  /* check if the BINDV6ONLY option exists at all */
+    {
+      int zero = 0;
+      setsockopt(sockmaster, IPPROTO_IPV6, IPV6_BINDV6ONLY, (char *)&zero, (socklen_t)sizeof(zero));
+    }
+  #endif
 
   /* Now bind the host address using bind() call.*/
   if (bind(sockmaster, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
@@ -1048,15 +1086,21 @@ static int waitforconn(int gopherport, char *clientipaddrstr, struct MotsognirCo
       close(sockmaster);
       return(-2);
     }
+
     /* fork out, close the master socket and return the client socket */
     mypid = fork();
     if (mypid == 0) { /* I'm the child */
         static char logprefix[128];
         close(sockmaster);
-        inet_ntop(cli_addr.sin6_family, &cli_addr.sin6_addr, clientipaddrstr, clilen);
+        if (inet_ntop(cli_addr.sin6_family, &cli_addr.sin6_addr, clientipaddrstr, clientipaddrstr_maxlen) == NULL) {
+          syslog(LOG_WARNING, "Failed to fetch client's IP address: %s", strerror(errno));
+          sprintf(clientipaddrstr, "UNKNOWN");
+        }
         sprintf(logprefix, "motsognir [%s]", clientipaddrstr);
         openlog(logprefix, LOG_PID, LOG_DAEMON); /* set up the logging to log with PID and peer's IP address */
         syslog(LOG_INFO, "new connection");
+        /* Restore the default SIGCHLD handler - we need this because we might call CGI scripts via popen() later, and need to know their exit status */
+        signal(SIGCHLD, SIG_DFL);
         return(sockslave);
       } else if (mypid > 0) { /* I'm the parent */
         /* just close child's socket to avoid messing with it */
@@ -1089,7 +1133,7 @@ static void sendtxtfiletosock(int sock, char *filename) {
     return;
   }
   for (;;) {
-    if (sockreadline(fileno(fd), linebuff, linebuff_len - 1) < 0) break;
+    if (sockreadline(fileno(fd), linebuff, linebuff_len - 1, NULL) < 0) break;
     if ((linebuff[0] == '.') && (linebuff[1] == 0)) sprintf(linebuff, ". "); /* if the line is a single dot, escape it */
     sendline(sock, linebuff);
   }
@@ -1217,11 +1261,11 @@ int main(int argc, char **argv) {
   }
 
   if (loadconfig(&config, configfile) != 0) {
-    printf("A configuration error has been detected. Check the logs for details.");
+    puts("A configuration error has been detected. Check the logs for details.");
     return(9);
   }
 
-  sock = waitforconn(config.gopherport, remoteclientaddr, &config);
+  sock = waitforconn(config.gopherport, remoteclientaddr, sizeof(remoteclientaddr), &config);
   if (sock == -1) return(0);
   if (sock < 0) {
     puts("a fatal error occured. check the logs for details.");
@@ -1230,7 +1274,11 @@ int main(int argc, char **argv) {
 
   StartTime = time(NULL);
 
-  sockreadline(sock, directorytolist, sizeof(directorytolist));
+  if (sockreadline(sock, directorytolist, sizeof(directorytolist), &StartTime) < 0) {
+    syslog(LOG_WARNING, "Error during selector receiving phase. Connection aborted.");
+    close(sock);
+    return(0);
+  }
   syslog(LOG_INFO, "Query='%s'", directorytolist);
   if (directorytolist[0] == 0) {   /* Empty request means "gimme the root listing" */
     directorytolist[0] = '/';
@@ -1238,7 +1286,9 @@ int main(int argc, char **argv) {
   }
 
   if (requestlookslikehttp(directorytolist) != 0) {
+    char discarddatabuff[4096];
     sendbackhttperror(sock, &config);
+    recv(sock, discarddatabuff, 4096, MSG_DONTWAIT); /* read whatever request the peer sent us, to drain the socket before closing it (otherwise the tcp stack would trigger a nasty RST) */
     close(sock);
     return(0);
   }
@@ -1252,7 +1302,7 @@ int main(int argc, char **argv) {
 
   /* a request must start with a / (if not, prepend it with one) */
   if (directorytolist[0] != '/') {
-    memmove(directorytolist+1, directorytolist, strlen(directorytolist)); /* first move the whole thing by one position to the right */
+    memmove(directorytolist+1, directorytolist, strlen(directorytolist)+1); /* first move the whole thing by one position to the right */
     directorytolist[0] = '/';
   }
 
@@ -1272,9 +1322,6 @@ int main(int argc, char **argv) {
     close(sock);
     return(0);
   }
-
-  /* prepend the path with a '/' if not present */
-  if (directorytolist[0] != '/') sprintf(directorytolist, "/%s", directorytolist);
 
   /* build the localfile path */
   sprintf(localfile, "%s%s", config.gopherroot, directorytolist);

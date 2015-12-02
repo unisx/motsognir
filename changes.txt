@@ -1,5 +1,14 @@
 * History of changes for the Motsognir gopher server *
 
+v1.0.3 [06 Oct 2013]
+ - Fixed HTTP answers to be sent without resetting the connection afterwards,
+ - Added an optimization that sends \r\n trailers within the same packet than the content line,
+ - Fixed the detection of CGI scripts exit status,
+ - Fixed fetching of the IP address of the client (was failing on IPv6 addresses),
+ - Fixed a bug causing Motsognir to listen on IPv6 only on some systems (namely FreeBSD),
+ - Added a few missing #includes to make Motsognir compile without complaining on FreeBSD,
+ - Added a short (10s) timeout for request receiving duration.
+
 v1.0.2 [30 Sep 2013]
  - A failure at percent decoding of the query is aborting any further processing,
  - Added error logs when active content (CGI or PHP) fails with a non-zero return code,

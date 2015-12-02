@@ -1,5 +1,5 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -O3 -std=gnu89 -pedantic
+CC ?= gcc
+CFLAGS += -Wall -Wextra -O3 -std=gnu89 -pedantic
 
 all: motsognir
 
@@ -13,10 +13,11 @@ clean:
 	rm -f motsognir *.o
 
 install:
-	mkdir -p $(DESTDIR)/usr/sbin/
-	mkdir -p $(DESTDIR)/etc/init.d/
-	mkdir -p $(DESTDIR)/usr/share/doc/packages/motsognir/
-	cp motsognir $(DESTDIR)/usr/sbin/
-	cp motsognir.conf $(DESTDIR)/etc/
-	cp initd_motsognir $(DESTDIR)/etc/init.d/motsognir
-	cp license.txt changes.txt manual.pdf $(DESTDIR)/usr/share/doc/packages/motsognir/
+	mkdir -p $(PREFIX)/$(DESTDIR)/usr/sbin/
+	mkdir -p $(PREFIX)/$(DESTDIR)/etc/init.d/
+	mkdir -p $(PREFIX)/$(DESTDIR)/usr/share/doc/motsognir/
+	cp motsognir $(PREFIX)/$(DESTDIR)/usr/sbin/
+	cp motsognir.conf $(PREFIX)/$(DESTDIR)/etc/
+	@if [ -d $(PREFIX)/$(DESTDIR)/etc/init.d ] ; then cp initd_motsognir $(PREFIX)/$(DESTDIR)/etc/init.d/motsognir ; fi
+	@if [ -d $(PREFIX)/$(DESTDIR)/etc/rc.d ] ; then cp rc_d_motsognir $(PREFIX)/$(DESTDIR)/etc/rc.d/motsognir ; fi
+	cp changes.txt manual.pdf $(PREFIX)/$(DESTDIR)/usr/share/doc/motsognir/
