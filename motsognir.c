@@ -1,7 +1,7 @@
 /*
     * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
     *  Motsognir - The mighty gopher server                               *
-    *  Copyright (C) Mateusz Viste 2008-2014                              *
+    *  Copyright (C) Mateusz Viste 2008-2015                              *
     * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
    ----------------------------------------------------------------------
@@ -46,8 +46,8 @@
 #include "extmap.h"
 
 /* Constants */
-#define pVer "1.0.6"
-#define pDate "2008-2014"
+#define pVer "1.0.7"
+#define pDate "2008-2015"
 #define HOMEPAGE "http://motsognir.sourceforge.net"
 
 /* declare the default config file location, if not already declared from CLI
@@ -69,9 +69,11 @@ struct MotsognirConfig {
   char *capsservergeolocationstring;
   char *capsserverarchitecture;
   char *capsserverdescription;
+  char *capsserverdefaultencoding;
   int cgisupport;
   int phpsupport;
   int subgophermaps;
+  int paranoidmode;
   char *runasuser;
   uid_t runasuser_uid;
   gid_t runasuser_gid;
@@ -81,6 +83,7 @@ struct MotsognirConfig {
   char *bind;
   char *extmapfile;
   struct extmap_t *extmap;
+  char securldelim;
 };
 
 
@@ -336,6 +339,10 @@ static void printcapstxt(int sock, struct MotsognirConfig *config, char *version
     sprintf(linebuff, "ServerGeolocationString=%s", config->capsservergeolocationstring);
     sendline(sock, linebuff);
   }
+  if (config->capsserverdefaultencoding != NULL) {
+    sprintf(linebuff, "ServerDefaultEncoding=%s", config->capsserverdefaultencoding);
+    sendline(sock, linebuff);
+  }
 }
 
 
@@ -430,10 +437,12 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
   config->capsservergeolocationstring = NULL;
   config->capsserverarchitecture = NULL;
   config->capsserverdescription = NULL;
+  config->capsserverdefaultencoding = NULL;
   config->defaultgophermap = NULL;
   config->cgisupport = 0;
   config->phpsupport = 0;
   config->subgophermaps = 0;
+  config->paranoidmode = 0;
   config->runasuser = NULL;
   config->runasuser_uid = 0;
   config->runasuser_gid = 0;
@@ -443,6 +452,7 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
   config->bind = NULL;
   config->extmapfile = NULL;
   config->extmap = NULL;
+  config->securldelim = 0;
 
   fd = fopen(configfile, "r");
   if (fd == NULL) {
@@ -488,6 +498,8 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
                 config->capsserverdescription = strdup(valuebuff);
               } else if (strcasecmp(tokenbuff, "CapsServerGeolocationString") == 0) {
                 config->capsservergeolocationstring = strdup(valuebuff);
+              } else if (strcasecmp(tokenbuff, "CapsServerDefaultEncoding") == 0) {
+                config->capsserverdefaultencoding = strdup(valuebuff);
               } else if (strcasecmp(tokenbuff, "DefaultGophermap") == 0) {
                 config->defaultgophermap = strdup(valuebuff);
               } else if (strcasecmp(tokenbuff, "GopherRoot") == 0) {
@@ -504,6 +516,8 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
                 config->phpsupport = atoi(valuebuff);
               } else if (strcasecmp(tokenbuff, "SubGophermaps") == 0) {
                 config->subgophermaps = atoi(valuebuff);
+              } else if (strcasecmp(tokenbuff, "paranoidmode") == 0) {
+                config->paranoidmode = atoi(valuebuff);
               } else if (strcasecmp(tokenbuff, "chroot") == 0) {
                 config->chroot = strdup(valuebuff);
               } else if (strcasecmp(tokenbuff, "userdir") == 0) {
@@ -513,6 +527,8 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
                 if (config->httperrfile == NULL) syslog(LOG_WARNING, "WARNING: Failed to load custom http error file '%s'. Default content will be used instead.", valuebuff);
               } else if (strcasecmp(tokenbuff, "ExtMapFile") == 0) {
                 config->extmapfile = strdup(valuebuff);
+              } else if (strcasecmp(tokenbuff, "SecUrlDelim") == 0) {
+                config->securldelim = atoi(valuebuff);
             }
             valuebuffpos = 0;
           } else if (bytebuff != '\r') {
@@ -581,25 +597,41 @@ static int loadconfig(struct MotsognirConfig *config, char *configfile) {
 }
 
 
-static char *explode_serverside_params_from_query(char *directorytolist) {
-  char *tabposition, *ptr;
-  for (tabposition = directorytolist; *tabposition != 0; tabposition++) {
-    if (*tabposition == '\t') break;
-    if (*tabposition == '?') break;
-  }
-  /* if no tab nor '?' found, exit (no server-side params were provided) */
-  if (*tabposition == 0) return(NULL);
-  /* parse the rest of the string, and cut off anything that is beyong the next tab (if any) */
-  for (ptr = tabposition; *ptr != 0; ptr++) {
-    if (*ptr == '\t') {
-      *ptr = 0;
+static char **explode_serverside_params_from_query(char *directorytolist, struct MotsognirConfig *config) {
+  char *ptr, *tabposition = NULL, *queposition = NULL;
+  static char *res[2] = { NULL, NULL };
+  /* find out the positions of tabs and question marks */
+  for (ptr = directorytolist; *ptr != 0; ptr++) {
+    if ((*ptr == '?') && (queposition == NULL)) {
+      queposition = ptr;
+    }
+    if ((*ptr == config->securldelim) && (queposition == NULL)) {
+      queposition = ptr;
+    }
+    if ((*ptr == '\t') && (tabposition == NULL)) {
+      tabposition = ptr;
       break;
     }
   }
+  /* if a tab was found, extract the search query */
+  if (tabposition != NULL) {
+    for (ptr = tabposition + 1; *ptr != 0; ptr++) {
+      if (*ptr == '\t') {
+        *ptr = 0;
+        break;
+      }
+    }
+    res[1] = strdup(tabposition + 1);
+    *tabposition = 0; /* set tabposition to zero, to end up the URL nicely */
+  }
+  /* if a question mark was found, extract the URL query */
+  if (queposition != NULL) {
+    res[0] = strdup(queposition + 1);
+    *queposition = 0; /* set queposition to zero, to end up the URL nicely */
+  }
   /* Retrieve server-side parameters */
-  syslog(LOG_INFO, "Got following server-side parameters: %s", tabposition + 1);
-  *tabposition = 0;  /* cut the selector string at the tab position */
-  return(strdup(tabposition + 1)); /* and return a new string with only params */
+  syslog(LOG_INFO, "Got following server-side parameters: %s | %s", res[0], res[1]);
+  return(res); /* return the array with params */
 }
 
 
@@ -930,14 +962,16 @@ static char lastcharofstring(char *string) {
 }
 
 
-static void execCgi(int sock, char *localfile, char *srvsideparams, struct MotsognirConfig *config, char *version, char *scriptname, char *remoteclientaddr, char *launcher) {
+static void execCgi(int sock, char *localfile, char **srvsideparams, struct MotsognirConfig *config, char *version, char *scriptname, char *remoteclientaddr, char *launcher) {
   char tmpstring[4096];
   char *cmd;
   int res;
-  unsigned char bytebuff;
+  char *emptyarr[2] = { NULL, NULL };
   FILE *cgifd;
-  if (srvsideparams != NULL) {
-      syslog(LOG_INFO, "running server-side app '%s' with query '%s'", localfile, srvsideparams);
+  /* if srvsideparams is NULL, replace it temporarily by an empty array */
+  if (srvsideparams == NULL) srvsideparams = emptyarr;
+  if ((srvsideparams[0] != NULL) || (srvsideparams[1] != NULL)) {
+      syslog(LOG_INFO, "running server-side app '%s' with queries '%s' + '%s'", localfile, srvsideparams[0], srvsideparams[1]);
     } else {
       syslog(LOG_INFO, "running server-side app '%s'", localfile);
   }
@@ -950,13 +984,21 @@ static void execCgi(int sock, char *localfile, char *srvsideparams, struct Motso
   setenv("GATEWAY_INTERFACE", "CGI/1.0", 1);              /* The revision of the CGI specification to which this server complies (typically CGI/1.0 or CGI/1.1) */
   setenv("REMOTE_HOST", remoteclientaddr, 1);             /* remote host's IP address */
   setenv("REMOTE_ADDR", remoteclientaddr, 1);             /* remote host's IP address */
-  if (srvsideparams != NULL) setenv("QUERY_STRING", srvsideparams, 1); /* QUERY_STRING should not be decoded in any fashion! */
+  /* choose one of the available parameters as QUERY_STRING */
+  if (srvsideparams[0] != NULL) {
+      setenv("QUERY_STRING", srvsideparams[0], 1); /* QUERY_STRING should not be decoded in any fashion! */
+    } else if (srvsideparams[1] != NULL) {
+      setenv("QUERY_STRING", srvsideparams[1], 1); /* QUERY_STRING should not be decoded in any fashion! */
+  }
+  /* provide both QUERY_STRING_URL and QUERY_STRING_SEARCH */
+  if (srvsideparams[0] != 0) setenv("QUERY_STRING_URL", srvsideparams[0], 1);
+  if (srvsideparams[1] != 0) setenv("QUERY_STRING_SEARCH", srvsideparams[1], 1);
   setenv("SCRIPT_NAME", scriptname, 1);
   if (launcher == NULL) {
       cmd = localfile;
     } else {
       cmd = tmpstring;
-      snprintf(tmpstring, 4096, "%s %s", launcher, localfile);
+      snprintf(tmpstring, sizeof(tmpstring), "%s %s", launcher, localfile);
   }
   cgifd = popen(cmd, "r");
   if (cgifd == NULL) {
@@ -965,10 +1007,9 @@ static void execCgi(int sock, char *localfile, char *srvsideparams, struct Motso
   }
   /* read from the CGI application, and send to the socket */
   for (;;) {
-    res = fgetc(cgifd);
-    if (res < 0) break;
-    bytebuff = res;
-    send(sock, &bytebuff, 1, 0);
+    res = fread(tmpstring, 1, sizeof(tmpstring), cgifd);
+    if (res <= 0) break;
+    send(sock, tmpstring, res, 0);
   }
   /* close the pipe */
   res = pclose(cgifd);
@@ -980,7 +1021,7 @@ static void execCgi(int sock, char *localfile, char *srvsideparams, struct Motso
 }
 
 
-static void outputgophermap(int sock, struct MotsognirConfig *config, char *localfile, char *gophermapfile, char *directorytolist, char *remoteclientaddr, char *srvsideparams) {
+static void outputgophermap(int sock, struct MotsognirConfig *config, char *localfile, char *gophermapfile, char *directorytolist, char *remoteclientaddr, char **srvsideparams) {
   FILE *gophermapfd;
   char linebuff[4096];
   char itemtype;
@@ -1019,7 +1060,7 @@ static void outputgophermap(int sock, struct MotsognirConfig *config, char *loca
     }
     /* if a sub-gophermap script is provided (and feature is enabled), run it now */
     if (itemtype == '=') {
-      if (config->subgophermaps != 0) execCgi(sock, itemdesc, "", config, pVer, "", remoteclientaddr, NULL);
+      if (config->subgophermaps != 0) execCgi(sock, itemdesc, NULL, config, pVer, "", remoteclientaddr, NULL);
       continue;
     }
     /* check values, and put default ones if some are missing */
@@ -1039,7 +1080,7 @@ static void outputgophermap(int sock, struct MotsognirConfig *config, char *loca
 }
 
 
-static void outputdir(int sock, struct MotsognirConfig *config, char *localfile, char *directorytolist, char *remoteclientaddr, char *srvsideparams) {
+static void outputdir(int sock, struct MotsognirConfig *config, char *localfile, char *directorytolist, char *remoteclientaddr, char **srvsideparams) {
   char gophermapfile[1024];
   syslog(LOG_INFO, "The resource is a directory");
   if (lastcharofstring(localfile) != '/') strcat(localfile, "/");
@@ -1159,7 +1200,7 @@ static int waitforconn(int gopherport, char *clientipaddrstr, int clientipaddrst
   /* I don't want to get notified about SIGHUP */
   signal(SIGHUP, SIG_IGN);
 
-  syslog(LOG_INFO, "process started");
+  syslog(LOG_INFO, "motsognir v" pVer " process started");
 
   /* fork off */
   mypid = fork();
@@ -1302,6 +1343,7 @@ static void sendbinfiletosock(int sock, char *filename) {
   fd = fopen(filename, "rb");
   if (fd == NULL) { /* file could not be opened */
     syslog(LOG_WARNING, "ERROR: File '%s' could not be opened", filename);
+    free(buff);
     return;
   }
   for (;;) {
@@ -1309,6 +1351,7 @@ static void sendbinfiletosock(int sock, char *filename) {
     if (bytesread <= 0) break; /* end of file (I guess) */
     send(sock, buff, bytesread, 0);
   }
+  free(buff);
   fclose(fd);
 }
 
@@ -1423,7 +1466,7 @@ int main(int argc, char **argv) {
   char rootdir[4096];
   char remoteclientaddr[64];
   char localserveraddr[64];
-  char *srvsideparams;
+  char **srvsideparams;
   char gophertype;
   char *configfile = CONFIGFILE;
   int sock;
@@ -1491,7 +1534,7 @@ int main(int argc, char **argv) {
   }
 
   /* separate server side params from the 'real' query */
-  srvsideparams = explode_serverside_params_from_query(directorytolist);
+  srvsideparams = explode_serverside_params_from_query(directorytolist, &config);
 
   /* Decode percent-encoded data - note that this must be done AFTER we separated server side params, because QUERY_STRING must NOT be decoded in any way */
   if (percdecode(directorytolist) != 0) {
@@ -1548,6 +1591,28 @@ int main(int argc, char **argv) {
     sendline(sock, ".");
     close(sock);
     return(0);
+  }
+
+  /* in 'paranoid' mode, only allow access to files that are world-readable */
+  if (config.paranoidmode != 0) {
+    struct stat statbuf;
+    if (stat(localfile, &statbuf) != 0) {
+      /* error while reading attributes */
+      syslog(LOG_INFO, "stat() failed: %s", strerror(errno));
+      sendline(sock, "3Internal error\tfake\tfake\t0");
+      sendline(sock, "iInternal error\tfake\tfake\t0");
+      sendline(sock, ".");
+      close(sock);
+      return(0);
+    } else if ((statbuf.st_mode & S_IROTH) != S_IROTH) {
+      /* not world-readable */
+      syslog(LOG_INFO, "Paranoid mode check failed: file is not world-readable");
+      sendline(sock, "3Permission denied\tfake\tfake\t0");
+      sendline(sock, "iPermission denied\tfake\tfake\t0");
+      sendline(sock, ".");
+      close(sock);
+      return(0);
+    }
   }
 
   /* if the query is pointing to a CGI file, and CGI support is enabled - execute the query */

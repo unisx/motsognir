@@ -1,5 +1,13 @@
 * History of changes for the Motsognir gopher server *
 
+v1.0.7 [12 Jul 2015]
+ - Support for secondary parameters passed to CGI scripts (when both a search string AND a '?' URL is used),
+ - Added a configurable secondary query-delimiter character (SecUrlDelim),
+ - New CAPS token: 'ServerDefaultEncoding',
+ - Implemented a configurable 'Paranoid mode' for serving only world-readable files,
+ - Fixed a slight memory leak,
+ - Significantly improved performances when reading data from CGI.
+
 v1.0.6 [11 Nov 2014]
  - Support for custom file mapping (extension to gopher filetype),
  - Serving gopher content from users directories, using the '/~username/' URL scheme (configurable),

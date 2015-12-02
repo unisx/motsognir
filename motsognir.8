@@ -110,6 +110,13 @@ UserDir=
 # By default no chroot is used.
 chroot=
 
+## Paranoid mode ##
+# For paranoidal security, you might want to enable "Paranoid mode". In this
+# mode, Motsognir accepts to serve only files with permissions set to "world
+# readable".
+# Possible values: 0 (disabled) or 1 (enabled). Disabled by default.
+ParanoidMode=0
+
 ## Activate the verbose mode ##
 # Here you can enable/disable the verbose mode. In verbose mode,
 # Motsognir will generate much more logs. This is useful only in
@@ -366,14 +373,17 @@ A system daemon should not be run as root. In the (unlikely!) situation where an
 .SS CHOOSE YOUR FILE PERMISSIONS WISELY
 
 If your Motsognir server runs as a non-privileged user, then it makes much sense to limit permissions on files that it serves. If the gopher server is not supposed to modify a file, this file should be set as 'read-only' and owned by root. This way, even if Motsognir becomes compromised, it still won't be able to modify these files.
+.SS USE PARANOID MODE IF YOU ARE (REALLY) PARANOID
+
+By default, Motsognir will happily serve anything that is located somewhere in the gopher root path, and that is readable by the gopher-running user. To make things even more strict, you might want to use Motsognir's "Paranoid mode" (configurable in Motsognir's configuration file). In this mode, Motsognir will accept to serve only files that have "world readable" permissions set.
 .SS TRAP THE DAEMON INSIDE A CHROOT JAIL
 
 The principle of a chroot jail is simple: run a process inside a 'virtualized' environment with a modified root path (for example, mapping a chroot / on /srv/gopher/). This technique is used to make it impossible for the process to access any file outside the chroot jail. A process can need some files, like shared libraries, or configuration files, to run properly. If chrooting a process, one would need to put all these files into the chroot as well (and the process' executable file itself!). To avoid these problems, Motsognir provides a 'chroot' configuration parameter that, once set, will make Motsognir run, load its configuration, and only then perform a chroot to the designated directory.
 Note, that if you use any kind of dynamic files (*.cgi or *.php), you will need to take care to put all dependencies of these applications inside the chroot jail. This includes a shell at /bin/sh, all system libs that your applications might require, etc. Often a working /proc will also be needed.
 .SH LEGAL MUMBO-JUMBO
 
-Copyright (C) Mateusz Viste 2008, 2009, 2010, 2011, 2012, 2013, 2014
-http://sourceforge.net/projects/motsognir/
+Copyright (C) Mateusz Viste 2008-2015
+http://motsognir.sourceforge.net
 gopher://gopher.viste-family.net/1/projects/motsognir/
 
 All rights reserved. This product or documentation is protected by copyright and is distributed under licenses restricting its use, copying, distribution and decompilation. See the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version for details.

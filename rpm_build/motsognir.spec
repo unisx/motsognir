@@ -5,7 +5,7 @@
 #
 
 Name: motsognir
-Version: 1.0.5
+Version: 1.0.7
 Release: 1%{?dist}
 Summary: A robust, reliable and easy to install gopher server
 Url: http://motsognir.sourceforge.net/
