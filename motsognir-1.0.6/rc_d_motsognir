@@ -1,0 +1,30 @@
+#!/bin/sh
+#
+# motsognir.sh for rc.d usage (c) 2013 Mateusz Viste.
+# $Id$
+
+# PROVIDE: motsognir
+# REQUIRE: DAEMON
+# BEFORE: LOGIN
+# KEYWORD: shutdown
+#
+# Add the following line to /etc/rc.conf to enable motsognir:
+#
+#  motsognir_enable="YES"
+#  # optional
+#  motsognir_configfile="/usr/local/etc/motsognir.conf"
+#
+
+. /etc/rc.subr
+
+# Set some defaults
+motsognir_enable=${motsognir_enable:-"NO"}
+motsognir_configfile=${motsognir_configfile:-"/usr/local/etc/motsognir.conf"}
+
+name=motsognir
+rcvar=motsognir_enable
+load_rc_config $name
+command=/usr/local/bin/motsognir
+command_args="--config ${motsognir_configfile}"
+
+run_rc_command "$1"

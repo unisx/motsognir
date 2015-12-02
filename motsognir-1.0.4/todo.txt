@@ -1,0 +1,4 @@
+
+TODO ideas
+ - configurable limitation on global number and per-ip number of processes
+ - Add option bindaddr and write documentation about how to create several gophers on a single server

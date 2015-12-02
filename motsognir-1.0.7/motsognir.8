@@ -1,0 +1,395 @@
+.TH MOTSOGNIR 8 "November 1, 2014" "" "The mighty gopher server"
+.SH NAME
+motsognir \- a simple, fast gopher server with CGI and PHP support
+.RE
+.SH INTRODUCTION
+
+Motsognir is a robust, reliable and easy to install open-source gopher server for Unix-like systems. Motsognir supports server-side CGI applications and PHP scripts, is plainly compatible with UTF-8 filesystems, and is entirely written in ANSI C without external dependencies. It supports both IPv4 and IPv6 'out of the box', without requiring any special configuration.
+.PP
+Gopher is a distributed document search and retrieval network protocol designed for the Internet. Its goal is to function as an improved form of Anonymous FTP, enhanced with hyperlinking features similar to that of the World Wide Web.
+.PP
+I wrote Motsognir primarily for fun, but it appears to have become a strong gopher server implementation with some very nice points: easy to install, lightweight, portable, secure\.\.\.
+.PP
+The Motsognir gopher server is meant to be used for small projects (like home servers), but should scale well on bigger architectures as well. All the configuration is done via a single configuration file, which has very reasonable defaults. That makes Motsognir easily maintainable, and allows the administrator to have a full knowledge of what features are allowed/enabled on the server.
+.RE
+.PP
+
+.SH INSTALLATION
+
+Motsognir is already available prepackaged for a variety of operating systems. If you could not find a package suitable for your system, then installing Motsognir on your system is still very easy. On the first place, you will have to build it. Assuming you have the basic GNU development tools installed (make, gcc), building Motsognir should be as easy as:
+.PP
+.nf
+.fam C
+  # make
+
+.fam T
+.fi
+This will generate a 'motsognir' executable. You will need to install it to your system:
+.PP
+.nf
+.fam C
+  # make install
+
+.fam T
+.fi
+Now, all you have to do is edit your /etc/motsognir.conf file to make it suit your needs, and then launch motsognir:
+.PP
+.nf
+.fam C
+  # /usr/sbin/motsognir
+
+.fam T
+.fi
+Last note: If you wish to store the motsognir.conf file outside of /etc/, this is possible as well, but you will have to instruct motsognir about its location every time your run it:
+.PP
+.nf
+.fam C
+  # /usr/sbin/motsognir --config /my/custom/location/motsognir.conf
+
+
+.fam T
+.fi
+.SH CONFIGURATION FILE
+
+The Motsognir's configuration file is located by default in /etc/motsognir.conf, and should be readable by the user which will run the motsognir service. The configuration file is a plain-text file, containing some tokens with values. All lines beginning with the "#" character are ignored (and can be used to put some comments in the configuration file).
+If any of the parameter is missing from the configuration file, or have an empty value, Motsognir will load a default value instead. Here is an example of a self-explanatory configuration file:
+.PP
+.nf
+.fam C
+##############################################################
+#                                                            #
+#     CONFIGURATION FILE FOR THE MOTSOGNIR GOPHER SERVER     #
+#                                                            #
+##############################################################
+
+
+## Server's hostname ##
+# The hostname the gopher server is reachable at. This setting is highly
+# recommended, because the gopher protocol is heavily relying on
+# self-pointing links. If not declared, the server's IP address will be used
+# instead.
+#GopherHostname=gopher.example.com
+
+## Gopher TCP port ##
+# The TCP port on which the public Gopher server listens on.
+# Usually, gopher servers are published on port 70. Default: 70.
+GopherPort=70
+
+## Bind on IP address ##
+# Set this 'bind' parameter to the IP address you'd like Motsognir to listen
+# on. Note, that this parameter must be either an IPv6 address, or an IPv4
+# address written in IPv4-mapped IPv6 notation (for ex. "::FFFF:10.0.0.1").
+# If not specified, Motsognir will listen on all available IP addresses.
+# This setting might be useful if you have a multihomed server, and you would
+# like to serve different content for each IP address.
+# Examples:
+#  bind=2001:DB8:135:A0E3::2
+#  bind=::FFFF:192.168.0.3
+bind=
+
+## Root directory ##
+# That's the local path to Gopher resources. Note, that if you use
+# a chroot configuration, you must provide here the virtual path
+# instead of the real one.
+# The default path is /var/gopher/
+GopherRoot=/var/gopher/
+
+## User home directories ##
+# If you'd like to serve gopher content from user directories, using the
+# classic /~user/ URL scheme, then define the user directories location here
+# below. The configured location must contain a '%s' tag, which will be
+# substituted with the username by motsognir. This must be an absolute path.
+# If nothing is configured, then support for serving content from user
+# directories won't be available. Example:
+# UserDir=/home/%s/public_gopher/
+UserDir=
+
+## chroot configuration ##
+# If you'd like to put Motsognir inside a chroot jail, configure here
+# the chroot directory that shall be used.
+# By default no chroot is used.
+chroot=
+
+## Paranoid mode ##
+# For paranoidal security, you might want to enable "Paranoid mode". In this
+# mode, Motsognir accepts to serve only files with permissions set to "world
+# readable".
+# Possible values: 0 (disabled) or 1 (enabled). Disabled by default.
+ParanoidMode=0
+
+## Activate the verbose mode ##
+# Here you can enable/disable the verbose mode. In verbose mode,
+# Motsognir will generate much more logs. This is useful only in
+# debug situations.
+# Possible values: 0 (disabled) or 1 (enabled). Disabled by default.
+Verbose=0
+
+## CGI support ##
+# The line below enables/disables CGI support. Read the manual
+# for details.
+# Possible values: 0 (disabled) or 1 (enabled). Disabled by default.
+GopherCgiSupport=0
+
+## PHP support ##
+# There you can enable PHP support.
+# Possible values: 0 (disabled) or 1 (enabled). Disabled by default.
+GopherPhpSupport=0
+
+## Run as another user ##
+# If you start motsognir under a root account, you might want to configure
+# it so it drops root privileges as soon as it doesn't need them anymore and
+# switches to another user. This is recommended for increased security,
+# unless you already run Motsognir as a non-root user.
+# To do so, provide here the username of the user that Motsognir should run
+# as. Default = no value.
+RunAsUser=
+
+## Default gophermap #
+# If you wish that your server would use a default gophermap when displaying
+# a directory that do not have a gophermap, you can specify here a path to
+# the gophermap file you'd like to use.
+DefaultGophermap=
+
+## HTTP error file
+# When Motsognir receives a HTTP request, it answers with a HTTP error,
+# along with a html message indicating why it is wrong. If you'd like to use
+# a custom html file, you can set it here. Note, that the specified file is
+# loaded when Motsognir's starts. If you modify the file afterwards, you'll
+# need to restart the Motsognir process for the file to be reloaded.
+# Example: HttpErrFile=/etc/motsognir-httperr.html
+HttpErrFile=
+
+## Caps.txt support ##
+# Caps.txt is a specific file-like selector, which allows a gopher client to
+# know more about the server's implementation (for example what the path's
+# delimiter is, where is the server located, etc). When enabled, Motsognir
+# will answer with caps-compatible data to requests for "/caps.txt".
+# Caps support is enabled by default (CapsSupport=1).
+CapsSupport=1
+
+## Caps additionnal informations ##
+# If Caps support is enabled, you can specify there some additional
+# informations about your server. These informations will be served
+# to gopher clients along with the CAPS.TXT data.
+# Example:
+#  CapsServerArchitecture=Linux/i386
+#  CapsServerDescription=This is my server
+#  CapsServerGeolocationString=Dobrogoszcz, Poland
+CapsServerArchitecture=
+CapsServerDescription=
+CapsServerGeolocationString=
+
+# [End of file here]
+
+
+.fam T
+.fi
+.SH DIRECTORY LISTINGS
+
+As any other gopher server, Motsognir will present to gopher clients listings of available directories with a specific presentation. A specific requirement of the Gopher protocol is that it needs to provide a "type" for every resource. To detect that gopher type, Motsognir is simply basing on the file's extension. Below is a table containing all relations between gopher filetypes and real file extensions (at least that's the way Motsognir handles them):
+.PP
+.nf
+.fam C
+ Gopher type | Description                  | Files binded to this gopher type
+  0          | Plain text file              | *.txt
+  1          | Directory listing            | All directories
+  2          | CSO search query             | -
+  3          | Error message                | -
+  4          | BinHex encoded text file     | -
+  5          | Binary (PC-DOS) archive file | -
+  6          | UUEncoded text file          | -
+  7          | Search engine query          | -
+  8          | Telnet session pointer       | -
+  9          | Binary file                  | All files that doesn't fit into any category
+  g          | GIF image file               | *.gif
+  h          | HTML file                    | *.htm,*.html
+  i          | Informational message        | -
+  I          | Image file (other than GIF)  | *.jpg,*.jpeg,*.png,*.bmp,*.pcx,*.ico,*.tif,*.tiff,*.svg,*.eps
+  s          | Audio file                   | *.mp3,*.mp2,*.wav,*.mid,*.wma,*.flac,*.mpc,*.aiff,*.aac
+  P          | PDF file                     | *.pdf
+  M          | MIME encoded message         | -
+  ;          | Video file                   | -
+
+.fam T
+.fi
+Then, once all filetypes present in a given directory are known, Motsognir will send a directory listing to the remote gopher client.
+Gophermaps
+There are situations when you would like to have the absolute control on how the server will display a directory. That's why Motsognir supports gophermaps. If Motsognir finds a file called "gophermap" (without any extension) in a directory, then it doesn't check the directory content, and simply outputs to the user the content of the gophermap. Note, that if you enable CGI and/or PHP support, Motsognir will also look for respectively gophermap.cgi and gophermap.php files. A gophermap file contains gopher entries as described by the RFC 1436. There's an example of a gophermap file (of course <tab> have to be replaced by real tabs):
+.PP
+.nf
+.fam C
+  iWelcome to my gopher server!<tab>fake<tab>null<tab>0
+  i<tab>fake<tab>null<tab>0
+  0About my server<tab>/about.txt<tab>mygopher.domain.net<tab>70
+  1Download<tab>/download<tab>mygopher.domain.net<tab>70
+  1A link to a friend's server<tab><tab>friend.domain.net<tab>70
+  hMy Website<tab>URL:http://mywebsite.com<tab><tab>
+
+.fam T
+.fi
+You can omit the server's address and server's port parts in your gophermap files (unless these are dynamically generated via CGI or PHP). If you don't specify a port, Motsognir provides the one your server is using (usually 70). If you don't specify a host, Motsognir provides your server's hostname. If you specify a relative selector (not beginning by a / character) instead of an absolute path, Motsognir sticks on the path of the currently browsed directory (but only if the host part is omitted, or pointing to your own server).
+Therefore, a simpler form of the above gophermap could look like that:
+.PP
+.nf
+.fam C
+  iWelcome to my gopher server!
+  i
+  0About my server<tab>about.txt
+  1Download<tab>download
+  1A link to a friend's server<tab>friend.domain.net<tab>70
+  hMy Website<tab>URL:http://mywebsite.com
+
+.fam T
+.fi
+A special feature of Motsognir regarding gophermap files is the ability to generate a dynamic file listing inside a gophermap, using a special %FILES% directive. Example:
+.PP
+.nf
+.fam C
+  iWelcome to my gopher server!
+  i
+  0About my server<tab>about.txt
+  i
+  iBelow are all the files I have in this directory:
+  %FILES%
+  i
+  iEnjoy!
+
+.fam T
+.fi
+Motsognir provides you with a feature that allows you to set a gophermap to be used by any directory that do not have its own gophermap. This is the 'default' gophermap. The default gophermap have to be declared in the Motsognir's configuration file, via the 'DefaultGophermap' directive.
+.RE
+.PP
+
+.SH CGI SUPPORT
+
+Motsognir supports CGI application, which allows to run custom scripts and applications interacting with the gopher client.
+Let's see how CGI works.
+Each time a client requests the URL corresponding to your CGI program, the server will execute it in real-time, then the output of your program will go more or less directly to the client. In fact, when it comes to answer to the client, the CGI application will output a gopher response (ie. a plain text file for file type #0, a directory listing for file type #1, etc\.\.\.). This response will be catched by Motsognir, and forwarded to the gopher client as being the request's answer.
+The Motsognir gopher server provides some information to the CGI application, by setting some environment variables. Note, that for security reasons - and unlike some other CGI implementations - Motsognir will never feed CGI scripts with any command-line parameters.
+Motsognir will set several environment variables, which can be read by the called CGI script. Here is the complete list of these variables:
+.PP
+.nf
+.fam C
+ QUERY_STRING       The URL parameters, as provided by the client
+ SERVER_SOFTWARE    The name and version of the server software
+ SERVER_NAME        The server's hostname, DNS alias, or IP address, used for self-referencing links
+ GATEWAY_INTERFACE  The revision of the CGI specification, as supported by the server
+ REMOTE_ADDR        The IP address of the remote client
+ REMOTE_HOST        Same as REMOTE_ADDR
+ SCRIPT_NAME        Script name (for self-referencing links)
+ SERVER_PORT        The port number to which the request was sent
+
+.fam T
+.fi
+Note, that the QUERY_STRING variable will contain data inputed by the user. For type #7 items, it will contain the search string (on type #7 items, the gopher client usually asks the user for a query, using some kind of pop-up). For any other item's type, the QUERY_STRING variable will contain the part of the URL after the first "?" character (if any). For example, for a request on "gopher://mygopher.server.com/0/myprog.cgi?hellothere", the QUERY_STRING variable will contain the data "hellothere".
+.RE
+.PP
+
+.SH HOW TO ENABLE CGI SUPPORT
+
+If you would like to use CGI applications on your Motsognir server, you will have to enable CGI support in the Motsognir's configuration file (GopherCgiSupport = 1). You will also have to make sure that your CGI programs use the extension *.cgi.
+.RE
+.PP
+
+.SH PHP SUPPORT
+
+PHP is a scripting language that is very popular in the web world. You can use it with gopher, as well. Motsognir provides PHP support since its v1.0. The PHP concept is very similar to CGI (historically, PHP was in fact born as a set of custom CGI scripts), therefore you are advised to read the chapter about CGI first. Most of it applies to PHP, too.
+The main difference is that instead of trying to directly execute PHP files, Motsognir will feed them to your system's php interpreter, and collect the result.
+To pass data to your PHP application, you will have to rely on the QUERY_STRING environment variable.
+How to enable PHP support in Motsognir
+First of all, make sure that php is available on your system. Then, simply enable the parameter in Motsognir's configuration file (GopherPhpSupport = 1). Note, that all your php files must have the extension *.php to be recognized by Motsognir.
+Example
+Here below is a simple example of a PHP file that could be used as a dynamic (PHP) gophermap with Motsognir.
+.PP
+.nf
+.fam C
+  \<?php
+    echo "iHello, this is a php-driven gophermap\\tx\\tx\\t0\\r\\n";
+    echo "i\\tx\\tx\\t0\\r\\n";
+    echo "iCurrent date is " . date(DATE_RFC822) . "\\tx\\tx\\t0\\r\\n";
+    echo "iServer powered by {$_SERVER\['SERVER_SOFTWARE']}\\tx\\tx\\t0\\r\\n";
+    echo "i\\tx\\tx\\t0\\r\\n";
+    echo "1Go back\\t\\t{$_SERVER\['SERVER_NAME']}\\t{$_SERVER\['SERVER_PORT']}\\r\\n";
+  ?\>
+
+
+.fam T
+.fi
+.SH CAPS.TXT SUPPORT
+
+Motsognir supports caps.txt since version 0.99.1. Caps.txt is a file-like selector, which allows a gopher client to know more about the server's gopher implementation (like what is the path delimiter character, how are structured server's paths, what the server's location is, etc).
+Caps.txt support is configurable via the Motsognir's configuration file, using following tokens:
+.PP
+.nf
+.fam C
+  ## Caps.txt support ##
+  # Caps.txt is a specific file-like selector, which allows a gopher client to
+  # know more about the server's implementation (for example what the path's
+  # delimiter is, where is the server located, etc). When enabled, Motsognir
+  # will answer with caps-compatible data to requests for "/caps.txt".
+  # Caps support is enabled by default (CapsSupport=1).
+  CapsSupport=1
+
+  ## Caps additionnal informations ##
+  # If Caps support is enabled, you can specify there some additional
+  # informations about your server. These informations will be served
+  # to gopher clients along with the CAPS.TXT data.
+  # Example:
+  #  CapsServerArchitecture=Linux/i386
+  #  CapsServerDescription=This is my server
+  #  CapsServerGeolocationString=Dobrogoszcz, Poland
+  CapsServerArchitecture=
+  CapsServerDescription=
+  CapsServerGeolocationString=
+
+.fam T
+.fi
+If you would like to have full access to what Motsognir sends in Caps.txt data, you might consider disabling the caps.txt support in Motsognir (CapsSupport=0), and simply host your own caps.txt file in the server's root. Here is an example of such custom caps.txt file:
+.PP
+.nf
+.fam C
+  CAPS
+  CapsVersion=1
+  ExpireCapsAfter=3600
+  PathDelimiter=/
+  PathIdentity=.
+  PathParent=..
+  PathParentDouble=FALSE
+  PathKeepPreDelimeter=FALSE
+  ServerSoftware=Motsognir
+  ServerSoftwareVersion=1.0
+  ServerArchitecture=Linux/i386
+  ServerDescription=This is my gopher server
+  ServerGeolocationString=Dobrogoszcz, Poland
+.fam T
+.fi
+
+.SH SECURITY CONSIDERATIONS
+
+Like for any unix daemon, there are a few security aspects that one should always keep in mind. Even the most carefully written programs can have bugs, some of which could be exploited by malicious persons. This is the reason why a system administrator should apply some security limitations even to simplest or most trusted daemons.
+.SS RUNNING MOTSOGNIR AS A NON-PRIVILEGED (NON-ROOT) USER
+
+A system daemon should not be run as root. In the (unlikely!) situation where an attacker would gain control over Motsognir, having the process running as an unprivileged user would greatly reduce the panel of harmful actions that could be performed on your server. However, there is a problem: you will usually want to run your gopher server under the standard TCP/70 port\.\.\.and this being a low port requires the process to have root privileges. That's why Motsognir provides a special configuration option 'RunAsUser'. It allows to set the username we'd like Motsognir to use, and then, when Motsognir will be launched, it will first open the listening port, and then drop its privileges and switch to the configured user.
+.SS CHOOSE YOUR FILE PERMISSIONS WISELY
+
+If your Motsognir server runs as a non-privileged user, then it makes much sense to limit permissions on files that it serves. If the gopher server is not supposed to modify a file, this file should be set as 'read-only' and owned by root. This way, even if Motsognir becomes compromised, it still won't be able to modify these files.
+.SS USE PARANOID MODE IF YOU ARE (REALLY) PARANOID
+
+By default, Motsognir will happily serve anything that is located somewhere in the gopher root path, and that is readable by the gopher-running user. To make things even more strict, you might want to use Motsognir's "Paranoid mode" (configurable in Motsognir's configuration file). In this mode, Motsognir will accept to serve only files that have "world readable" permissions set.
+.SS TRAP THE DAEMON INSIDE A CHROOT JAIL
+
+The principle of a chroot jail is simple: run a process inside a 'virtualized' environment with a modified root path (for example, mapping a chroot / on /srv/gopher/). This technique is used to make it impossible for the process to access any file outside the chroot jail. A process can need some files, like shared libraries, or configuration files, to run properly. If chrooting a process, one would need to put all these files into the chroot as well (and the process' executable file itself!). To avoid these problems, Motsognir provides a 'chroot' configuration parameter that, once set, will make Motsognir run, load its configuration, and only then perform a chroot to the designated directory.
+Note, that if you use any kind of dynamic files (*.cgi or *.php), you will need to take care to put all dependencies of these applications inside the chroot jail. This includes a shell at /bin/sh, all system libs that your applications might require, etc. Often a working /proc will also be needed.
+.SH LEGAL MUMBO-JUMBO
+
+Copyright (C) Mateusz Viste 2008-2015
+http://motsognir.sourceforge.net
+gopher://gopher.viste-family.net/1/projects/motsognir/
+
+All rights reserved. This product or documentation is protected by copyright and is distributed under licenses restricting its use, copying, distribution and decompilation. See the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version for details.
+The copyright owner gives no warranties and makes no representations about the contents of this manual and specifically disclaims warranties of merchantability or fitness to any purpose.
+The copyright owner reserves the right to revise this manual and to make changes from time to time in its content without notifying any person of such revision or changes.
+.SS GRAPHIC IMAGES
+The image of the dwarf on the cover of the printed manual is based on the original work of Lorenz Frolich (1820-1908).
+.SS TRADEMARKS
+Unix is a registered trademark of UNIX System Laboratories, Inc. Windows, WindowsNT, and Win32 are registered trademarks of Microsoft Corp. All other product names mentioned herein are the trademarks of their respective owners.

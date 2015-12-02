@@ -1,0 +1,4 @@
+
+TODO ideas
+ - configurable limitation on global number and per-ip number of processes
+ - make it possible to use active content (cgi/php) as a default gophermap

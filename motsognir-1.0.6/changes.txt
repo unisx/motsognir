@@ -1,0 +1,72 @@
+* History of changes for the Motsognir gopher server *
+
+v1.0.6 [11 Nov 2014]
+ - Support for custom file mapping (extension to gopher filetype),
+ - Serving gopher content from users directories, using the '/~username/' URL scheme (configurable),
+ - Motsognir simulates a 'not found' message whenever a client tries to explicitely fetch a gophermap file,
+ - Added support for sub-gophermap scripts,
+ - Default location for the configuration file can be #defined at compile time (-DCONFIGFILE=/etc/motsognir.conf),
+ - Updated the FreeBSD port files, kindly contributed by kaltheat.
+
+v1.0.5 [05 Oct 2014]
+ - Sanitizing the environment before calling a CGI/PHP child (contributed by Matt Lewandowsky),
+ - Fixed the $HOME, $USER and $USERNAME environment variable when dropping root privileges (contributed by Matt Lewandowsky),
+ - Added support for setting a custom http error file (HttpErrFile),
+ - When logging IP addresses, IPv4 addresses are logged as 'normal' (short) addresses instead of IPV6MAPPED addresses,
+ - The 'GopherHostname' setting is not mandatory anymore. If missing, local server's IP will be used automatically,
+ - Support for custom IP binding (allows to use multiple gopher instances on a single server).
+
+v1.0.4 [15 Mar 2014]
+ - Server-side params are passed to dynamic gophermaps (CGI, PHP) now,
+ - Dynamic gophermaps (CGI, PHP) can be used as a global (server-wide) gophermap.
+
+v1.0.3 [06 Oct 2013]
+ - Fixed HTTP answers to be sent without resetting the connection afterwards,
+ - Added an optimization that sends \r\n trailers within the same packet than the content line,
+ - Fixed the detection of CGI scripts exit status,
+ - Fixed fetching of the IP address of the client (was failing on IPv6 addresses),
+ - Fixed a bug causing Motsognir to listen on IPv6 only on some systems (namely FreeBSD),
+ - Added a few missing #includes to make Motsognir compile without complaining on FreeBSD,
+ - Added a short (10s) timeout for request receiving duration.
+
+v1.0.2 [30 Sep 2013]
+ - A failure at percent decoding of the query is aborting any further processing,
+ - Added error logs when active content (CGI or PHP) fails with a non-zero return code,
+ - Using a much bigger disk read buffer when serving a binary file (1M instead of 1K),
+ - Adapted the init.d script to be more generic (was only working on Debian, should be good on most Linux distros now).
+
+v1.0.1 [28 Sep 2013]
+ - Daemonizing in a slightly cleaner way (changing working dir to / and calling setsid()),
+ - Fixed encoding of UTF-8 characters in URLs (some characters were becoming corrupted after the URL encoding),
+ - Added a configuration option to make Motsognir drop root privileges and switch to another user,
+ - Added chroot support,
+ - Fixed detection of file's extensions on filenames with several dots.
+
+v1.0 [24 Sep 2013]
+ - The whole code base has been rewritten from FreeBASIC to ANSI C,
+ - Moved to a standalone server architecture with its own listening service (instead of relying on an inetd-like superserver),
+ - Dropped Windows support,
+ - Removed the authentication feature,
+ - Removed the 'gopherlinks files' feature,
+ - Removed the 'descript.ion metadata' feature,
+ - Moved default configuration from /etc/motsognir.cfg to /etc/motsognir.conf,
+ - Added command line parameter --config to specify a configuration in a custom location,
+ - Added a file listing directive to gophermaps, allowing to show a dynamic list of files from within a gophermap,
+ - Added PHP support,
+ - Added a 'default gophermap' feature allowing to customize the look of an entire server with a global gophermap.
+
+v0.99.2 [06 Aug 2013]
+ - Added support for recursive paths in gophermaps (like "../../directory/").
+
+v0.99.1 [11 Sep 2010]
+ - Added support for caps.txt data (see the configuration file for more infos).
+
+v0.99 [08 Jul 2010]
+ - Motsognir has been forked from the gopher module of the Grumpy server,
+ - Added support for UTF-8 filenames,
+ - Implemented percent-encoding compliancy for URLs passed to the server,
+ - Added support for very big files, up to 8EiB (was: max 2 GiB),
+ - Fixed a minor file-locking bug (gophermap handles weren't released properly),
+ - Fixed directory entries sorting (gopherlinks weren't sorted correctly in the list),
+ - Implemented a HTTP requests detector (responds to any HTTP request by a HTTP error code),
+ - Added more logging verbosity.

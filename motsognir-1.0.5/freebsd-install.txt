@@ -1,0 +1,16 @@
+
+Installing motsognir on a FreeBSD system requires to perform following steps:
+
+1. Compile motsognir
+# make
+
+2. Copy files on disk
+# cp motsognir /usr/local/bin/
+# cp motsognir.conf /usr/local/etc/
+# cp rc_d_motsognir /usr/local/etc/rc.d/motsognir
+# mkdir /usr/local/share/motsognir
+# cp manual.pdf /usr/local/share/motsognir/
+# cp changes.txt /usr/local/share/motsognir/
+
+3. Enable motsognir in your rc.conf
+# echo 'motsognir_enabled="YES"' >> /etc/rc.conf

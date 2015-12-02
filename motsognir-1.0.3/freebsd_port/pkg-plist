@@ -1,0 +1,5 @@
+usr/sbin/motsognir
+etc/motsognir.conf
+usr/share/doc/motsognir/changes.txt
+usr/share/doc/motsognir/manual.pdf
+@dirrm usr/share/doc/motsognir
