@@ -5,14 +5,14 @@
 #
 
 Name: motsognir
-Version: 1.0
+Version: 1.0.1
 Release: 1%{?dist}
 Summary: A robust, reliable and easy to install gopher server
 Url: http://sourceforge.net/projects/motsognir/
 Group: Productivity/Networking/Other
 
 License: GPL-3.0+
-Source0: motsognir-1.0.tar.gz
+Source0: motsognir-1.0.1.tar.gz
 
 BuildRequires: gcc
 
@@ -30,13 +30,16 @@ make
 %check
 
 %install
-install -D motsognir %buildroot/%{_bindir}/motsognir
-install -D motsognir.conf %buildroot/%{_sysconfdir}/motsognir.conf
+make install DESTDIR=%buildroot
+#install -D motsognir %buildroot/%{_sbindir}/motsognir
+#install -D motsognir.conf %buildroot/%{_sysconfdir}/motsognir.conf
+#install -D initd_motsognir %buildroot/%{_sysconfdir}/init.d/motsognir
 
 %files
 %attr(644, root, root) %doc license.txt changes.txt manual.pdf
 %attr(644, root, root) %config %{_sysconfdir}/motsognir.conf
-%attr(755, root, root) %{_bindir}/motsognir
+%attr(755, root, root) %{_sbindir}/motsognir
+%attr(755, root, root) %{_sysconfdir}/init.d/motsognir
 
 %changelog
 * Sat Sep 24 2013 Mateusz Viste <mateusz@viste-family.net> 1.0

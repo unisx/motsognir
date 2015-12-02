@@ -1,5 +1,12 @@
 * History of changes for the Motsognir gopher server *
 
+v1.0.1 [28 Sep 2013]
+ - Daemonizing in a slightly cleaner way (changing working dir to / and calling setsid()),
+ - Fixed encoding of UTF-8 characters in URLs (some characters were becoming corrupted after the URL encoding),
+ - Added a configuration option to make Motsognir drop root privileges and switch to another user,
+ - Added chroot support,
+ - Fixed detection of file's extensions on filenames with several dots.
+
 v1.0 [24 Sep 2013]
  - The whole code base has been rewritten from FreeBASIC to ANSI C,
  - Moved to a standalone server architecture with its own listening service (instead of relying on an inetd-like superserver),
@@ -11,7 +18,7 @@ v1.0 [24 Sep 2013]
  - Added command line parameter --config to specify a configuration in a custom location,
  - Added a file listing directive to gophermaps, allowing to show a dynamic list of files from within a gophermap,
  - Added PHP support,
- - Add a 'default gophermap' feature allowing to customize the look of an entire server with a global gophermap.
+ - Added a 'default gophermap' feature allowing to customize the look of an entire server with a global gophermap.
 
 v0.99.2 [06 Aug 2013]
  - Added support for recursive paths in gophermaps (like "../../directory/").

@@ -2,3 +2,6 @@
 TODO ideas
  - configurable limitation on global number and per-ip number of processes
  - make it possible to use active content (cgi/php) as a default gophermap
+ - when percent decoding fails, abort the request
+ - detect (and log) when an active app (CGI/PHP) fails to be ran
+ - Add option bindaddr and write documentation about how to create several gophers on a single server.

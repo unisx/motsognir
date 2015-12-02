@@ -11,3 +11,10 @@ motsognir.o: motsognir.c
 
 clean:
 	rm -f motsognir *.o
+
+install:
+	mkdir -p $(DESTDIR)/usr/sbin/
+	mkdir -p $(DESTDIR)/etc/init.d/
+	cp motsognir $(DESTDIR)/usr/sbin/
+	cp motsognir.conf $(DESTDIR)/etc/
+	cp initd_motsognir $(DESTDIR)/etc/init.d/motsognir

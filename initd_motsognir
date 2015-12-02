@@ -1,0 +1,43 @@
+#!/bin/sh
+
+### BEGIN INIT INFO
+# Provides:        gopher
+# Required-Start:  $network $remote_fs $syslog
+# Required-Stop:   $network $remote_fs $syslog
+# Default-Start:   2 3 4 5
+# Default-Stop:
+# Short-Description: Start Gopher daemon
+### END INIT INFO
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+. /lib/lsb/init-functions
+
+DAEMON=/usr/sbin/motsognir
+
+test -x $DAEMON || exit 5
+
+
+case $1 in
+        start)
+                log_daemon_msg "Starting gopher server" "motsognir"
+                start-stop-daemon --start --quiet --oknodo --startas $DAEMON --exec $DAEMON
+                status=$?
+                log_end_msg $status
+                ;;
+        stop)
+                log_daemon_msg "Stopping gopher server" "motsognir"
+                start-stop-daemon --stop --quiet --oknodo --exec $DAEMON
+                log_end_msg $?
+                ;;
+        restart)
+                $0 stop && sleep 2 && $0 start
+                ;;
+        status)
+                status_of_proc $DAEMON "Gopher server"
+                ;;
+        *)
+                echo "Usage: $0 {start|stop|restart|status}"
+                exit 2
+                ;;
+esac
